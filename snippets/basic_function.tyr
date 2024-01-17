@@ -1,0 +1,10 @@
+function foo() {
+    print(5);
+}
+
+function main() {
+    foo();
+    foo();
+    foo();
+    foo();
+}

@@ -1,0 +1,15 @@
+function main() {
+    var x = 0;
+    
+    while x <= 100 {
+        print(x);
+        if x % 2 == 0 {
+            x = x + 3;
+            continue;
+        }
+        if x >= 50 {
+            break;
+        }
+        x = x + 1;
+    }
+}

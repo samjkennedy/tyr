@@ -1,0 +1,56 @@
+function sqrt(n: f32): f32 {
+    var start: f32 = 0.0;
+    var end: f32 = 0.0;
+    var mid: f32 = 0.0;
+
+    var ans: f32 = 0.0;
+    
+    while start <= end {
+		mid = 0.0 + (start + end / 2);
+
+        if (mid * mid == n) {
+            ans = mid;
+            break;
+        }
+
+        if mid * mid < n {
+            ans = 0.0 + start;
+            start = mid + 1.0;
+        }
+ 
+        else {
+            end = mid - 1.0;
+        }
+    }
+
+    var increment: f32 = 0.1;
+    var i: i32 = 0;
+    while i < 5 {
+        while (ans * ans <= n) {
+            ans = ans + increment;
+        }
+ 
+        ans = ans - increment;
+        increment = increment / 10.0;
+        i = i + 1;
+    }
+    return ans;  
+}
+
+record Vector {
+    x: f32,
+    y: f32
+}
+
+function mag(with v: Vector): f32 {
+    return sqrt(x * x + y * y);
+}
+
+function main() {
+    var v1 = Vector { 3.0, 4.0 };
+    var v2 = Vector { 6.0, 8.0 };
+
+    print(mag(v1));
+    print(mag(v2));
+    print(mag(Vector { 2.0, 2.0 }));
+}

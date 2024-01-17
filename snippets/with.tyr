@@ -1,0 +1,19 @@
+record Vec {
+    x: f32,
+    y: f32
+}
+
+function scale(with v: Vec, factor: f32): Vec {
+    return Vec { x * factor, y * factor };
+}
+
+function sqr_len(with v: Vec): f32 {
+    return x * x + y * y;
+}
+
+function main() {
+    var v = Vec { 2.0, 3.0 };
+
+    print(v.scale(2.0).sqr_len());
+}
+

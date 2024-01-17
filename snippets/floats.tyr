@@ -1,0 +1,15 @@
+record V2d {
+    x: f32,
+    y: f32
+}
+
+function main() {
+    var f: f32 = 2.5;
+
+    print(f);
+
+    var v = V2d { f, 3.5 };
+
+    print(v.x);
+    print(v.y);
+}

@@ -1,0 +1,17 @@
+function main() {
+    var u: u8 = 255;
+    print(u);
+    u = u + 1;
+    print(u);
+    
+    var i: i8 = 127;
+    print(i);
+    i = i + 1;
+    print(i);
+
+    var bigge_boye: u64 = 18446744073709551615;
+    print(bigge_boye);
+    bigge_boye = bigge_boye + 1;
+    print(bigge_boye);
+}
+

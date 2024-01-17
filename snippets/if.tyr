@@ -1,0 +1,16 @@
+function main() {
+    var b = false;
+    var c = true;
+    if b and true {
+        print(1);
+    } else if c {
+        print(2);
+    } else {
+        print(3);
+    }
+
+    var x = 10;
+    if x >= 10 {
+        print(x);
+    }
+}

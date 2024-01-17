@@ -1,0 +1,9 @@
+record Vector3 {
+    x, y, z: f64 = 0.0
+}
+
+function main() {
+    var v: Vector3;
+
+    print(v.x)
+}

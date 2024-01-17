@@ -1,0 +1,26 @@
+record Vec {
+    x: f32,
+    y: f32
+}
+
+function scale(v: Vec, factor: f32): Vec {
+    return Vec{ v.x * factor, v.y * factor};
+}
+
+function add(a: u32, b: u32): u32 {
+    return a + b;
+}
+
+function main() {
+    var v = Vec { 2.0, 3.0 };
+
+    var scaled = v.scale(2.0)
+                  .scale(1.5);
+
+    print(scaled.x);
+    print(scaled.y);
+
+    var x = 1;
+
+    print(x.add(2));
+}

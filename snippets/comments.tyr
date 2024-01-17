@@ -1,0 +1,4 @@
+function main() {
+    //comments don't get compiled!
+    print(5); //even on the same line!
+}

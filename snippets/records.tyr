@@ -1,0 +1,23 @@
+record Point {
+    x: u32,
+    y: u32
+}
+
+record Line {
+    a: Point,
+    b: Point,
+}
+
+function make_point(x: u32, y: u32): Point {
+    return Point {x, y};
+}
+
+function main() {
+    var p1 = Point{ 4, 5 };
+    var p2 = make_point( 2, 6 );
+
+    var l: Line = Line {p1, p2};
+
+    print(l.a.x + l.b.x);
+    print(l.a.y + l.b.y);
+}
