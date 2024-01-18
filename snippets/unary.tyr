@@ -1,0 +1,12 @@
+function main() {
+    var x = true;
+    var y = not x;
+
+    print(y);
+    print(not y);
+
+    var n: i32 = 10;
+
+    print(-n);
+    print(+n);
+}

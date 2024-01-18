@@ -228,6 +228,17 @@ impl CEmitter {
 
                 Ok(())
             }
+            CheckedExpressionKind::Unary { op, operand } => {
+                match op {
+                    crate::parser::UnaryOpKind::Negation => write!(self.out_file, " -")?,
+                    crate::parser::UnaryOpKind::Not => write!(self.out_file, " !")?,
+                    crate::parser::UnaryOpKind::Identity => write!(self.out_file, " +")?,
+                }
+                write!(self.out_file, "(")?;
+                self.emit_expression(operand)?;
+                write!(self.out_file, ")")?;
+                Ok(())
+            }
             CheckedExpressionKind::Parenthesised { expression } => {
                 write!(self.out_file, "(")?;
                 self.emit_expression(expression)?;

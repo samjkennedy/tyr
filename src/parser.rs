@@ -96,6 +96,10 @@ pub enum ExpressionKind {
         op: BinaryOp,
         right: Box<Expression>,
     },
+    Unary {
+        op: UnaryOp,
+        operand: Box<Expression>,
+    },
     Parenthesised {
         expression: Box<Expression>,
     },
@@ -149,6 +153,19 @@ pub enum BinaryOpKind {
     Gt,
     GtEq,
     NEq,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnaryOp {
+    pub kind: UnaryOpKind,
+    pub loc: Loc,
+}
+
+#[derive(Debug, Clone)]
+pub enum UnaryOpKind {
+    Negation,
+    Not,
+    Identity,
 }
 
 #[derive(Debug)]
@@ -471,6 +488,31 @@ impl Parser {
         })
     }
 
+    fn get_unary_operator_precedence(kind: &TokenKind) -> usize {
+        return match kind {
+            TokenKind::Plus | TokenKind::Minus | TokenKind::NotKeyword => 1,
+            _ => 0,
+        };
+    }
+
+    fn parse_unary_op(token: Token) -> Result<UnaryOp, ParseError> {
+        return match token.kind {
+            TokenKind::Plus => Ok(UnaryOp {
+                kind: UnaryOpKind::Identity,
+                loc: token.loc,
+            }),
+            TokenKind::Minus => Ok(UnaryOp {
+                kind: UnaryOpKind::Negation,
+                loc: token.loc,
+            }),
+            TokenKind::NotKeyword => Ok(UnaryOp {
+                kind: UnaryOpKind::Not,
+                loc: token.loc,
+            }),
+            _ => Err(ParseError::UnexpectedToken(token)),
+        };
+    }
+
     fn get_binary_operator_precedence(kind: &TokenKind) -> usize {
         return match kind {
             TokenKind::Star | TokenKind::Slash | TokenKind::Percent => 10,
@@ -554,50 +596,69 @@ impl Parser {
         tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
         parent_precedence: usize,
     ) -> Result<Expression, ParseError> {
-        let mut left = self.parse_expression(tokens)?;
+        if let Some(token) = tokens.peek() {
+            let precedence = Self::get_unary_operator_precedence(&token.kind);
 
-        let loc = left.loc.clone();
+            let mut left = if precedence == 0 || precedence <= parent_precedence {
+                self.parse_expression(tokens)?
+            } else {
+                let token = tokens.next().expect("should never fail");
+                let unary_op = Self::parse_unary_op(token.clone())?;
 
-        while let Some(token) = tokens.peek() {
-            let precedence = Self::get_binary_operator_precedence(&token.kind);
+                let operand = self.parse_binary_expression(tokens, precedence)?;
 
-            if precedence == 0 || precedence <= parent_precedence {
-                match token.kind {
-                    TokenKind::Equals => {
-                        let equals = tokens.next().expect("should never fail");
-                        left = self.parse_assignment(left, tokens, equals)?
-                    }
-                    TokenKind::OpenParen => left = self.parse_function_call(left, tokens)?,
-                    TokenKind::OpenSquare => left = self.parse_array_index(left, tokens)?,
-                    TokenKind::OpenCurly => match left.kind {
-                        ExpressionKind::Variable { .. } if self.allow_record_literals => {
-                            left = self.parse_record_literal(left, tokens)?
-                        } //TODO: This gets toom eager in things like while x < `n {}`
+                Expression {
+                    kind: ExpressionKind::Unary {
+                        op: unary_op.clone(),
+                        operand: Box::new(operand),
+                    },
+                    loc: unary_op.loc,
+                }
+            };
+            let loc = left.loc.clone();
+
+            while let Some(token) = tokens.peek() {
+                let precedence = Self::get_binary_operator_precedence(&token.kind);
+
+                if precedence == 0 || precedence <= parent_precedence {
+                    match token.kind {
+                        TokenKind::Equals => {
+                            let equals = tokens.next().expect("should never fail");
+                            left = self.parse_assignment(left, tokens, equals)?
+                        }
+                        TokenKind::OpenParen => left = self.parse_function_call(left, tokens)?,
+                        TokenKind::OpenSquare => left = self.parse_array_index(left, tokens)?,
+                        TokenKind::OpenCurly => match left.kind {
+                            ExpressionKind::Variable { .. } if self.allow_record_literals => {
+                                left = self.parse_record_literal(left, tokens)?
+                            } //TODO: This gets toom eager in things like while x < `n {}`
+                            _ => return Ok(left),
+                        },
+                        TokenKind::Dot => left = Self::parse_accessor(left, tokens)?,
                         _ => return Ok(left),
-                    },
-                    TokenKind::Dot => left = Self::parse_accessor(left, tokens)?,
-                    _ => return Ok(left),
-                };
-                continue;
-            }
+                    };
+                    continue;
+                }
 
-            let token = tokens.next().expect("should never fail");
-            let binary_op = Self::parse_binary_op(token.clone())?;
+                let token = tokens.next().expect("should never fail");
+                let binary_op = Self::parse_binary_op(token.clone())?;
 
-            if let Some(_) = tokens.peek() {
-                let right = self.parse_binary_expression(tokens, precedence)?;
-                left = Expression {
-                    kind: ExpressionKind::Binary {
-                        left: Box::new(left),
-                        op: binary_op,
-                        right: Box::new(right),
-                    },
-                    loc: loc.clone(),
-                };
+                if let Some(_) = tokens.peek() {
+                    let right = self.parse_binary_expression(tokens, precedence)?;
+                    left = Expression {
+                        kind: ExpressionKind::Binary {
+                            left: Box::new(left),
+                            op: binary_op,
+                            right: Box::new(right),
+                        },
+                        loc: loc.clone(),
+                    };
+                }
             }
+            Ok(left)
+        } else {
+            Err(ParseError::UnexpectedEOF)
         }
-
-        Ok(left)
     }
 
     fn parse_accessor(
