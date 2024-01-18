@@ -203,6 +203,9 @@ impl CEmitter {
             CheckedExpressionKind::I64Literal { value } => write!(self.out_file, "{}", value),
             CheckedExpressionKind::F32Literal { value } => write!(self.out_file, "{}", value),
             CheckedExpressionKind::F64Literal { value } => write!(self.out_file, "{}", value),
+            CheckedExpressionKind::StringLiteral { value } => {
+                write!(self.out_file, "\"{}\"", value)
+            }
             CheckedExpressionKind::Binary { left, op, right } => {
                 self.emit_expression(left)?;
                 match op {
@@ -336,6 +339,7 @@ impl CEmitter {
             TypeKind::Array(el_count, el_type) => {
                 format!("{} [{}]", Self::get_c_type(el_type), el_count)
             }
+            TypeKind::String => "char*".to_string(),
         };
     }
 
@@ -355,6 +359,7 @@ impl CEmitter {
             TypeKind::I64 => "%lli".to_string(),
             TypeKind::F32 => "%.2f".to_string(),
             TypeKind::F64 => "%.6lf".to_string(),
+            TypeKind::String => "%s".to_string(),
         };
     }
 }

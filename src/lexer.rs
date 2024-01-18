@@ -20,6 +20,7 @@ impl From<io::Error> for LexError {
 pub enum TokenKind {
     IntLiteral,
     RealLiteral,
+    StringLiteral,
     Identifier,
     TrueKeyword,
     FalseKeyword,
@@ -65,6 +66,7 @@ pub struct Loc {
     pub file: String,
     pub row: usize,
     pub col: usize,
+    pub len: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +138,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                                 file: file_path.to_string_lossy().into_owned(),
                                 row,
                                 col: col - real_literal.len(), // Adjust col to the start of the real literal
+                                len: real_literal.len(),
                             },
                         ));
                     } else {
@@ -146,6 +149,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                                 file: file_path.to_string_lossy().into_owned(),
                                 row,
                                 col: col - int_literal.len(), // Adjust col to the start of the int literal
+                                len: int_literal.len(),
                             },
                         ));
                     }
@@ -162,6 +166,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                                 file: file_path.to_string_lossy().into_owned(),
                                 row,
                                 col,
+                                len: identifier.len(),
                             },
                         ));
                         col += identifier.len();
@@ -175,9 +180,36 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: identifier.len(),
                         },
                     ));
                     col += identifier.len();
+                }
+                '"' => {
+                    let mut string_literal = String::new();
+                    col += 1; // Move past the opening double quote
+
+                    // Consume characters until the closing double quote
+                    while let Some(c) = line.chars().nth(col) {
+                        if c == '"' {
+                            // Move past the closing double quote
+                            col += 1;
+                            break;
+                        }
+                        string_literal.push(c);
+                        col += 1;
+                    }
+
+                    tokens.push(Token::new(
+                        TokenKind::StringLiteral,
+                        string_literal.clone(),
+                        Loc {
+                            file: file_path.to_string_lossy().into_owned(),
+                            row,
+                            col: col - string_literal.len() - 2, // Adjust col to the start of the string literal
+                            len: string_literal.len() + 2,
+                        },
+                    ));
                 }
                 '+' => {
                     tokens.push(Token::new(
@@ -187,6 +219,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -199,6 +232,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -211,6 +245,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -229,6 +264,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                                 file: file_path.to_string_lossy().into_owned(),
                                 row,
                                 col,
+                                len: 1,
                             },
                         ));
                         col += 1;
@@ -242,6 +278,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -254,6 +291,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -266,6 +304,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -278,6 +317,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -290,6 +330,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -302,6 +343,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -314,6 +356,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -326,6 +369,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -338,6 +382,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -355,6 +400,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: advance_by,
                         },
                     ));
 
@@ -375,6 +421,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: advance_by,
                         },
                     ));
 
@@ -393,6 +440,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: advance_by,
                         },
                     ));
 
@@ -413,6 +461,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: advance_by,
                         },
                     ));
 
@@ -426,6 +475,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -438,6 +488,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                     col += 1;
@@ -449,6 +500,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
+                            len: 1,
                         },
                     ));
                 }

@@ -14,6 +14,10 @@ function sqr_len(with v: Vec): f32 {
 function main() {
     var v = Vec { 2.0, 3.0 };
 
+    var a = [1, 2, 3, 4];
+
+    var x = a + 1;
+
     print(v.scale(2.0).sqr_len());
 }
 

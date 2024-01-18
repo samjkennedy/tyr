@@ -1,5 +1,5 @@
 use core::panic;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 use crate::{
     lexer::{Loc, Token, TokenKind},
@@ -20,8 +20,43 @@ pub enum TypeKind {
     I64,
     F32,
     F64,
+    String,
     Array(usize, Box<TypeKind>),
     Record(String, Vec<CheckedVariable>),
+}
+
+impl fmt::Display for TypeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeKind::Unit => write!(f, "unit"),
+            TypeKind::Bool => write!(f, "bool"),
+            TypeKind::U8 => write!(f, "u8"),
+            TypeKind::U16 => write!(f, "u16"),
+            TypeKind::U32 => write!(f, "u32"),
+            TypeKind::U64 => write!(f, "u64"),
+            TypeKind::I8 => write!(f, "i8"),
+            TypeKind::I16 => write!(f, "i16"),
+            TypeKind::I32 => write!(f, "i32"),
+            TypeKind::I64 => write!(f, "i64"),
+            TypeKind::F32 => write!(f, "f32"),
+            TypeKind::F64 => write!(f, "f64"),
+            TypeKind::String => write!(f, "string"),
+            TypeKind::Array(size, inner_type) => {
+                write!(f, "[{}]", size)?;
+                write!(f, "{}", inner_type)
+            }
+            TypeKind::Record(name, fields) => {
+                write!(f, "{} {{ ", name)?;
+                for (i, field) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", field.name, field.type_kind)?;
+                }
+                write!(f, " }}")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -89,7 +124,10 @@ pub enum TypeCheckError {
         name: String,
         loc: Loc,
     },
-    WithCalledOnNonRecordType(TypeKind, Loc),
+    WithCalledOnNonRecordType {
+        type_kind: TypeKind,
+        loc: Loc,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +242,9 @@ pub enum CheckedExpressionKind {
         accessee: Box<CheckedExpression>,
         member: String,
     },
+    StringLiteral {
+        value: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -302,12 +343,16 @@ impl Scope {
         };
     }
 
-    fn try_declare_variable(&mut self, variable: CheckedVariable) -> Result<(), TypeCheckError> {
+    fn try_declare_variable(
+        &mut self,
+        variable: CheckedVariable,
+        loc: Loc,
+    ) -> Result<(), TypeCheckError> {
         let name = variable.name.clone();
         if let Some(variable) = self.variables.get(&name) {
             return Err(TypeCheckError::VariableAlreadyDeclared {
                 variable: variable.clone(),
-                loc: variable.declaration_loc.clone(),
+                loc: loc.clone(),
             });
         }
         self.variables.insert(name, variable);
@@ -373,6 +418,7 @@ impl Scope {
             "i64" => Ok(TypeKind::I64),
             "f32" => Ok(TypeKind::F32),
             "f64" => Ok(TypeKind::F64),
+            "string" => Ok(TypeKind::String),
             _ => {
                 return match self.records.get(name) {
                     Some(type_kind) => Ok(type_kind.clone()),
@@ -475,11 +521,14 @@ impl TypeChecker {
                     self.type_check_expression(initialiser)?
                 };
 
-                self.scope.try_declare_variable(CheckedVariable {
-                    name: identifier.text.clone(),
-                    type_kind: checked_initialiser.type_kind.clone(),
-                    declaration_loc: identifier.loc.clone(),
-                })?;
+                self.scope.try_declare_variable(
+                    CheckedVariable {
+                        name: identifier.text.clone(),
+                        type_kind: checked_initialiser.type_kind.clone(),
+                        declaration_loc: identifier.loc.clone(),
+                    },
+                    identifier.loc.clone(),
+                )?;
 
                 Ok(CheckedStatement {
                     kind: CheckedStatementKind::VariableDeclaration {
@@ -723,11 +772,11 @@ impl TypeChecker {
         for arg in args {
             if let ExpressionKind::FunctionParameter {
                 modifiers,
-                identifier,
+                identifier: arg_identifier,
                 type_annotation,
             } = &arg.kind
             {
-                let name = identifier.text.to_owned();
+                let name = arg_identifier.text.to_owned();
                 if let ExpressionKind::TypeAnnotation {
                     colon: _,
                     identifier,
@@ -754,16 +803,17 @@ impl TypeChecker {
                                         );
                                     }
                                 } else {
-                                    return Err(TypeCheckError::WithCalledOnNonRecordType(
+                                    return Err(TypeCheckError::WithCalledOnNonRecordType {
                                         type_kind,
-                                        modifier.loc.clone(),
-                                    ));
+                                        loc: modifier.loc.clone(),
+                                    });
                                 }
                             }
                             _ => unreachable!(),
                         }
                     }
-                    self.scope.try_declare_variable(arg.clone())?;
+                    self.scope
+                        .try_declare_variable(arg.clone(), arg_identifier.loc.clone())?;
 
                     checked_args.push(arg);
                 } else {
@@ -865,7 +915,13 @@ impl TypeChecker {
                             value: token.text.parse().expect("should not fail"),
                         },
                     ),
-                    _ => unreachable!("{:?}", self.scope.assign_context),
+                    _ => {
+                        return Err(TypeCheckError::TypeMismatch {
+                            expected: self.scope.assign_context.clone(),
+                            actual: TypeKind::U32,
+                            loc: expression.loc.clone(),
+                        })
+                    }
                 };
                 Ok(CheckedExpression {
                     kind: checked_expression_kind,
@@ -895,6 +951,13 @@ impl TypeChecker {
                     loc: expression.loc.clone(),
                 })
             }
+            ExpressionKind::StringLiteral { token } => Ok(CheckedExpression {
+                kind: CheckedExpressionKind::StringLiteral {
+                    value: token.text.to_owned(),
+                },
+                type_kind: TypeKind::String,
+                loc: expression.loc.clone(),
+            }),
             ExpressionKind::Binary { left, op, right } => {
                 let checked_left = self.type_check_expression(&left)?;
                 let checked_right = self.type_check_expression(&right)?;
@@ -1194,7 +1257,7 @@ impl TypeChecker {
                 }
                 Err(TypeCheckError::CannotAccessType {
                     type_kind: checked_accessee.type_kind,
-                    loc: dot.loc.clone(),
+                    loc: accessee.loc.clone(),
                 })
             }
             ExpressionKind::FunctionParameter { .. } => unreachable!(),
@@ -1203,9 +1266,13 @@ impl TypeChecker {
 
     fn is_integer_type(kind: &TypeKind) -> bool {
         match kind {
-            TypeKind::Record(_, _) | TypeKind::Array(_, _) | TypeKind::Unit | TypeKind::Bool => {
-                false
-            }
+            TypeKind::Record(_, _)
+            | TypeKind::Array(_, _)
+            | TypeKind::Unit
+            | TypeKind::Bool
+            | TypeKind::F32
+            | TypeKind::F64
+            | TypeKind::String => false,
             TypeKind::U8
             | TypeKind::U16
             | TypeKind::U32
@@ -1214,15 +1281,16 @@ impl TypeChecker {
             | TypeKind::I16
             | TypeKind::I32
             | TypeKind::I64 => true,
-            TypeKind::F32 | TypeKind::F64 => false,
         }
     }
 
     fn is_number_type(kind: &TypeKind) -> bool {
         match kind {
-            TypeKind::Record(_, _) | TypeKind::Array(_, _) | TypeKind::Unit | TypeKind::Bool => {
-                false
-            }
+            TypeKind::Record(_, _)
+            | TypeKind::Array(_, _)
+            | TypeKind::Unit
+            | TypeKind::Bool
+            | TypeKind::String => false,
             TypeKind::U8
             | TypeKind::U16
             | TypeKind::U32

@@ -1,11 +1,14 @@
-use std::fs::File;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::{env, fs::File};
 
 use emitter::CEmitter;
 use lexer::{lex_file, LexError};
 use parser::{ParseError, Parser, Statement};
-use type_checker::{TypeCheckError, TypeChecker};
+use type_checker::TypeChecker;
+
+use crate::diagnostics::format_typecheck_error;
 
 pub mod emitter;
 pub mod lexer;
@@ -13,8 +16,22 @@ pub mod parser;
 pub mod rewriter;
 pub mod type_checker;
 
+mod diagnostics;
+
 fn main() {
-    let file_name = "snippets/with.tyr";
+    // Get the input file name from command line arguments
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("Usage: tyr_compiler <file.tyr>");
+        std::process::exit(1);
+    }
+    let file_name = &args[1];
+
+    // Check that the file has a ".tyr" extension
+    if !file_name.ends_with(".tyr") {
+        eprintln!("Error: Input file must have a '.tyr' extension.");
+        std::process::exit(1);
+    }
 
     let tokens = match lex_file(file_name.to_string()) {
         Ok(tokens) => tokens,
@@ -78,165 +95,7 @@ fn main() {
     let checked_statements = match type_checker.type_check_statements(statements) {
         Ok(checked_statements) => checked_statements,
         Err(e) => {
-            match e {
-                TypeCheckError::TypeMismatch {
-                    expected,
-                    actual,
-                    loc,
-                } => {
-                    eprintln!(
-                        "Type mismatch, expected {:?} but got {:?} at {}:{}:{}",
-                        expected,
-                        actual,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    )
-                }
-                TypeCheckError::BinaryOpNotImplementedForTypes {
-                    left,
-                    op,
-                    right,
-                    loc,
-                } => {
-                    eprintln!("Binary operation `{:?}` is not implemented for types `{:?} and {:?}` at {}:{}:{}", op, left, right, loc.file, loc.row, loc.col + 1)
-                }
-                TypeCheckError::VariableAlreadyDeclared { variable, loc } => {
-                    eprintln!(
-                        "Variable `{:?}` was already declared at {}:{}:{} at {}:{}:{}",
-                        variable.name,
-                        variable.declaration_loc.file,
-                        variable.declaration_loc.row,
-                        variable.declaration_loc.col + 1,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    );
-                }
-                TypeCheckError::NoSuchVariableDeclaredInScope { name, loc } => {
-                    eprintln!(
-                        "No such variable `{}` declared in scope at {}:{}:{}",
-                        name,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    );
-                }
-                TypeCheckError::NoSuchTypeDeclaredInScope { name, loc } => {
-                    eprintln!(
-                        "No such type `{}` declared in scope at {}:{}:{}",
-                        name,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    );
-                }
-                TypeCheckError::NoSuchFunctionDeclaredInScope { name, loc } => {
-                    eprintln!(
-                        "No such function `{}()` declared in scope at {}:{}:{}",
-                        name,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    );
-                }
-                TypeCheckError::FunctionAlreadyDeclared { function, loc } => {
-                    eprintln!(
-                        "Function `{}()` is already declared in scope at {}:{}:{}",
-                        function.name,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    );
-                }
-                TypeCheckError::NotAllCodePathsReturnValue { name, loc } => {
-                    eprintln!(
-                        "Function \"{}\" - Not all code paths return a value at {}:{}:{}",
-                        name,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    );
-                }
-                TypeCheckError::CannotIndexType { type_kind, loc } => {
-                    eprintln!(
-                        "Type `{:?}`\"` cannot be indexed at {}:{}:{}",
-                        type_kind,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    );
-                }
-                TypeCheckError::TypeAlreadyDeclared { record_name, loc } => {
-                    eprintln!(
-                        "Type `{}` is already declared in scope at {}:{}:{}",
-                        record_name,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    );
-                }
-                TypeCheckError::MissingArgForRecord {
-                    name,
-                    type_kind,
-                    record_name,
-                    loc,
-                } => {
-                    eprintln!(
-                        "Missing argument {}: {:?} for record {} at {}:{}:{}",
-                        name,
-                        type_kind,
-                        record_name,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    )
-                }
-                TypeCheckError::UnexpectedArgForRecord {
-                    type_kind,
-                    record_name,
-                    loc,
-                } => {
-                    eprintln!(
-                        "Unexpected argument of type {:?} for record {} at {}:{}:{}",
-                        type_kind,
-                        record_name,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    )
-                }
-                TypeCheckError::CannotAccessType { type_kind, loc } => {
-                    eprintln!(
-                        "Cannot call any accessors for type {:?} at {}:{}:{}",
-                        type_kind,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    )
-                }
-                TypeCheckError::NoSuchMember {
-                    member_name,
-                    name,
-                    loc,
-                } => {
-                    eprintln!(
-                        "No such member {} on record {} at {}:{}:{}",
-                        member_name,
-                        name,
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    )
-                }
-                TypeCheckError::WithCalledOnNonRecordType(type_kind, loc) => eprintln!(
-                    "Cannot use `with` on non-record type `{:?}` at {}:{}:{}",
-                    type_kind,
-                    loc.file,
-                    loc.row,
-                    loc.col + 1
-                ),
-            }
+            eprintln!("{}", format_typecheck_error(&e));
             return;
         }
     };
@@ -250,23 +109,27 @@ fn main() {
     //     println!("{:#?}", statement)
     // }
 
-    let mut c_emitter =
-        CEmitter::new(File::create(Path::new("out.c")).expect("couldn't open c file"));
+    let base_name = Path::new(file_name)
+        .file_stem()
+        .expect("Couldn't get file stem")
+        .to_string_lossy();
+    let c_file_name = format!("{}.c", base_name);
+    let exe_file_name = format!("{}", base_name);
+
+    let mut c_emitter = CEmitter::new(File::create(&c_file_name).expect("Couldn't open C file"));
 
     c_emitter
         .emit_program(rewritten_statements)
-        .expect("emit failed");
+        .expect("Emit failed");
 
+    // Compile the C code
     Command::new("gcc")
         .arg("-o")
-        .arg(
-            Path::new("out")
-                .with_extension("")
-                .file_name()
-                .expect("todo"),
-        )
-        .arg("out.c")
+        .arg(&exe_file_name)
+        .arg(&c_file_name)
         .output()
-        .expect("couldn't make executable");
-    //fs::remove_file("out.c").expect(&format!("Couldn't remove intermediate c file"));
+        .expect("Couldn't make executable");
+
+    // Remove the intermediate C file
+    fs::remove_file(&c_file_name).expect("Couldn't remove intermediate C file");
 }

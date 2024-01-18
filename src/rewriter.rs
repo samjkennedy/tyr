@@ -134,6 +134,7 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
         CheckedExpressionKind::I64Literal { value: _ } => Ok(expression),
         CheckedExpressionKind::F32Literal { value: _ } => Ok(expression),
         CheckedExpressionKind::F64Literal { value: _ } => Ok(expression),
+        CheckedExpressionKind::StringLiteral { value: _ } => Ok(expression),
         CheckedExpressionKind::ArrayLiteral { elements } => {
             let mut rewritten_elements = Vec::new();
 

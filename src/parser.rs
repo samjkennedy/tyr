@@ -73,6 +73,9 @@ pub enum ExpressionKind {
     RealLiteral {
         token: Token,
     },
+    StringLiteral {
+        token: Token,
+    },
     ArrayLiteral {
         open_square: Token,
         elements: Vec<Expression>,
@@ -752,6 +755,12 @@ impl Parser {
                 }),
                 TokenKind::RealLiteral => Ok(Expression {
                     kind: ExpressionKind::RealLiteral {
+                        token: current_token.clone(),
+                    },
+                    loc: current_token.loc.clone(),
+                }),
+                TokenKind::StringLiteral => Ok(Expression {
+                    kind: ExpressionKind::StringLiteral {
                         token: current_token.clone(),
                     },
                     loc: current_token.loc.clone(),

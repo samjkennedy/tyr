@@ -1,0 +1,12 @@
+function putstring(s: string) {
+    print(s);
+}
+
+function getstring(): string {
+    return "Hello!";
+}
+
+function main() {
+    putstring("Hello, world!");
+    getstring().putstring();
+}
