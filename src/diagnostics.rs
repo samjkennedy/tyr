@@ -58,11 +58,27 @@ pub fn format_typecheck_error(error: &TypeCheckError) -> String {
                 format_highlight(loc)
             );
             format!(
-                "{} binary operation '{:?}' not implemented for types '{}' and '{}' at {}\n{}",
+                "{} binary operation '{:?}' is not implemented for types '{}' and '{}' at {}\n{}",
                 log_level,
                 op,
                 left,
                 right,
+                format_location(loc),
+                highlight,
+            )
+        }
+        TypeCheckError::UnaryOpNotImplementedForType { op, operand, loc } => {
+            let error_line = get_error_line(loc);
+            let highlight = format!(
+                "    |\n{}\n    |{}",
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
+            );
+            format!(
+                "{} unary operation '{:?}' is not implemented for type '{}' at {}\n{}",
+                log_level,
+                op,
+                operand,
                 format_location(loc),
                 highlight,
             )

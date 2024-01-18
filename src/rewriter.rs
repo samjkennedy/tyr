@@ -181,6 +181,20 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
                 loc: expression.loc,
             })
         }
+        CheckedExpressionKind::Unary { op, operand } => {
+            let rewritten_operand = rewrite_expression(*operand)?;
+
+            //TODO: const analysis?
+
+            Ok(CheckedExpression {
+                kind: CheckedExpressionKind::Unary {
+                    op,
+                    operand: Box::new(rewritten_operand),
+                },
+                type_kind: expression.type_kind,
+                loc: expression.loc,
+            })
+        }
         CheckedExpressionKind::Parenthesised { expression: inner } => {
             let rewritten_expression = rewrite_expression(*inner)?;
 

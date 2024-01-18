@@ -3,7 +3,10 @@ use std::{collections::HashMap, fmt};
 
 use crate::{
     lexer::{Loc, Token, TokenKind},
-    parser::{BinaryOp, BinaryOpKind, Expression, ExpressionKind, Statement, StatementKind},
+    parser::{
+        self, BinaryOp, BinaryOpKind, Expression, ExpressionKind, Statement, StatementKind,
+        UnaryOp, UnaryOpKind,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +72,11 @@ pub enum TypeCheckError {
         left: TypeKind,
         op: BinaryOpKind,
         right: TypeKind,
+        loc: Loc,
+    },
+    UnaryOpNotImplementedForType {
+        op: parser::UnaryOpKind,
+        operand: TypeKind,
         loc: Loc,
     },
     TypeMismatch {
@@ -214,6 +222,10 @@ pub enum CheckedExpressionKind {
     },
     RecordLiteral {
         arguments: Vec<CheckedExpression>,
+    },
+    Unary {
+        op: UnaryOpKind,
+        operand: Box<CheckedExpression>,
     },
     Binary {
         left: Box<CheckedExpression>,
@@ -958,6 +970,20 @@ impl TypeChecker {
                 type_kind: TypeKind::String,
                 loc: expression.loc.clone(),
             }),
+            ExpressionKind::Unary { op, operand } => {
+                let checked_operand = self.type_check_expression(&operand)?;
+
+                let type_kind = Self::check_unary_expression(&op, &checked_operand.type_kind)?;
+
+                Ok(CheckedExpression {
+                    kind: CheckedExpressionKind::Unary {
+                        op: op.kind.clone(),
+                        operand: Box::new(checked_operand),
+                    },
+                    type_kind,
+                    loc: expression.loc.clone(),
+                })
+            }
             ExpressionKind::Binary { left, op, right } => {
                 let checked_left = self.type_check_expression(&left)?;
                 let checked_right = self.type_check_expression(&right)?;
@@ -1301,6 +1327,34 @@ impl TypeChecker {
             | TypeKind::I64
             | TypeKind::F32
             | TypeKind::F64 => true,
+        }
+    }
+
+    fn check_unary_expression(
+        op: &UnaryOp,
+        operand: &TypeKind,
+    ) -> Result<TypeKind, TypeCheckError> {
+        match op.kind {
+            parser::UnaryOpKind::Negation | parser::UnaryOpKind::Identity => {
+                if Self::is_number_type(&operand) {
+                    return Ok(operand.clone()); //todo pick right width
+                }
+                return Err(TypeCheckError::UnaryOpNotImplementedForType {
+                    op: op.kind.clone(),
+                    operand: operand.clone(),
+                    loc: op.loc.clone(),
+                });
+            }
+            parser::UnaryOpKind::Not => {
+                if operand == &TypeKind::Bool {
+                    return Ok(TypeKind::Bool);
+                }
+                return Err(TypeCheckError::UnaryOpNotImplementedForType {
+                    op: op.kind.clone(),
+                    operand: operand.clone(),
+                    loc: op.loc.clone(),
+                });
+            }
         }
     }
 
