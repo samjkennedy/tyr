@@ -2,10 +2,10 @@ use core::panic;
 use std::{collections::HashMap, fmt};
 
 use crate::{
-    lexer::{Loc, Token, TokenKind},
+    lexer::{span_locs, Loc, Token, TokenKind},
     parser::{
-        self, BinaryOp, BinaryOpKind, Expression, ExpressionKind, Statement, StatementKind,
-        UnaryOp, UnaryOpKind,
+        self, BinaryOp, BinaryOpKind, Expression, ExpressionKind, Location, Statement,
+        StatementKind, TypeExpressionKind, UnaryOp, UnaryOpKind,
     },
 };
 
@@ -25,7 +25,9 @@ pub enum TypeKind {
     F64,
     String,
     Array(usize, Box<TypeKind>),
+    Slice(Box<TypeKind>),
     Record(String, Vec<CheckedVariable>),
+    Range(Box<TypeKind>, Box<TypeKind>),
 }
 
 impl fmt::Display for TypeKind {
@@ -48,6 +50,9 @@ impl fmt::Display for TypeKind {
                 write!(f, "[{}]", size)?;
                 write!(f, "{}", inner_type)
             }
+            TypeKind::Slice(inner_type) => {
+                write!(f, "[]{}", inner_type)
+            }
             TypeKind::Record(name, fields) => {
                 write!(f, "{} {{ ", name)?;
                 for (i, field) in fields.iter().enumerate() {
@@ -57,6 +62,9 @@ impl fmt::Display for TypeKind {
                     write!(f, "{}: {}", field.name, field.type_kind)?;
                 }
                 write!(f, " }}")
+            }
+            TypeKind::Range(lower, upper) => {
+                write!(f, "range<{}, {}>", lower, upper)
             }
         }
     }
@@ -416,34 +424,59 @@ impl Scope {
         panic!("Cannot declare non-record types")
     }
 
-    fn try_get_type(&self, name: &String, loc: Loc) -> Result<TypeKind, TypeCheckError> {
-        //TODO: once custom types are a thing, this needs to be more complex
-        return match name.as_str() {
-            "bool" => Ok(TypeKind::Bool),
-            "u8" => Ok(TypeKind::U8),
-            "u16" => Ok(TypeKind::U16),
-            "u32" => Ok(TypeKind::U32),
-            "u64" => Ok(TypeKind::U64),
-            "i8" => Ok(TypeKind::I8),
-            "i16" => Ok(TypeKind::I16),
-            "i32" => Ok(TypeKind::I32),
-            "i64" => Ok(TypeKind::I64),
-            "f32" => Ok(TypeKind::F32),
-            "f64" => Ok(TypeKind::F64),
-            "string" => Ok(TypeKind::String),
-            _ => {
-                return match self.records.get(name) {
-                    Some(type_kind) => Ok(type_kind.clone()),
-                    None => match &self.parent {
-                        Some(parent) => parent.try_get_type(name, loc),
-                        None => Err(TypeCheckError::NoSuchFunctionDeclaredInScope {
-                            name: name.clone(),
-                            loc: loc.clone(),
-                        }),
-                    },
-                }
+    fn try_get_type(
+        &self,
+        type_expression_kind: &TypeExpressionKind,
+    ) -> Result<TypeKind, TypeCheckError> {
+        match type_expression_kind {
+            TypeExpressionKind::Basic { identifier } => {
+                let name = &identifier.text;
+                return match name.as_str() {
+                    "bool" => Ok(TypeKind::Bool),
+                    "u8" => Ok(TypeKind::U8),
+                    "u16" => Ok(TypeKind::U16),
+                    "u32" => Ok(TypeKind::U32),
+                    "u64" => Ok(TypeKind::U64),
+                    "i8" => Ok(TypeKind::I8),
+                    "i16" => Ok(TypeKind::I16),
+                    "i32" => Ok(TypeKind::I32),
+                    "i64" => Ok(TypeKind::I64),
+                    "f32" => Ok(TypeKind::F32),
+                    "f64" => Ok(TypeKind::F64),
+                    "string" => Ok(TypeKind::String),
+                    _ => {
+                        return match self.records.get(name) {
+                            Some(type_kind) => Ok(type_kind.clone()),
+                            None => match &self.parent {
+                                Some(parent) => parent.try_get_type(type_expression_kind),
+                                None => Err(TypeCheckError::NoSuchTypeDeclaredInScope {
+                                    name: name.clone(),
+                                    loc: identifier.loc.clone(),
+                                }),
+                            },
+                        }
+                    }
+                };
             }
-        };
+            TypeExpressionKind::Array {
+                open_square: _,
+                length,
+                close_square: _,
+                element_type,
+            } => {
+                let element_type_kind = self.try_get_type(&element_type)?;
+
+                Ok(TypeKind::Array(*length, Box::new(element_type_kind)))
+            }
+            TypeExpressionKind::Slice {
+                open_square: _,
+                close_square: _,
+                element_type,
+            } => {
+                let element_type_kind = self.try_get_type(&element_type)?;
+                Ok(TypeKind::Slice(Box::new(element_type_kind)))
+            }
+        }
     }
 }
 
@@ -507,12 +540,10 @@ impl TypeChecker {
                 let checked_initialiser = if let Some(type_annotation) = type_annotation {
                     if let ExpressionKind::TypeAnnotation {
                         colon: _,
-                        identifier,
+                        type_expression_kind,
                     } = &type_annotation.kind
                     {
-                        let type_kind = self
-                            .scope
-                            .try_get_type(&identifier.text, identifier.loc.clone())?;
+                        let type_kind = self.scope.try_get_type(&type_expression_kind)?;
 
                         self.scope.assign_context = type_kind.clone();
 
@@ -652,12 +683,10 @@ impl TypeChecker {
                 for (member_identifier, type_annotation) in members {
                     if let ExpressionKind::TypeAnnotation {
                         colon: _,
-                        identifier: type_identifier,
+                        type_expression_kind,
                     } = &type_annotation.kind
                     {
-                        let type_kind = self
-                            .scope
-                            .try_get_type(&type_identifier.text, type_identifier.loc.clone())?;
+                        let type_kind = self.scope.try_get_type(&type_expression_kind)?;
 
                         checked_members.push(CheckedVariable {
                             name: member_identifier.text.clone(),
@@ -703,12 +732,10 @@ impl TypeChecker {
             Some(type_annotation) => {
                 if let ExpressionKind::TypeAnnotation {
                     colon: _,
-                    identifier,
+                    type_expression_kind,
                 } = &type_annotation.kind
                 {
-                    let type_kind = self
-                        .scope
-                        .try_get_type(&identifier.text, identifier.loc.clone())?;
+                    let type_kind = self.scope.try_get_type(&type_expression_kind)?;
                     Some(type_kind)
                 } else {
                     unreachable!()
@@ -726,13 +753,10 @@ impl TypeChecker {
             {
                 if let ExpressionKind::TypeAnnotation {
                     colon: _,
-                    identifier,
+                    type_expression_kind,
                 } = &type_annotation.kind
                 {
-                    checked_args.push(
-                        self.scope
-                            .try_get_type(&identifier.text, identifier.loc.clone())?,
-                    )
+                    checked_args.push(self.scope.try_get_type(&type_expression_kind)?)
                 } else {
                     unreachable!()
                 }
@@ -790,17 +814,15 @@ impl TypeChecker {
             {
                 let name = arg_identifier.text.to_owned();
                 if let ExpressionKind::TypeAnnotation {
-                    colon: _,
-                    identifier,
+                    colon,
+                    type_expression_kind,
                 } = &type_annotation.kind
                 {
-                    let type_kind = self
-                        .scope
-                        .try_get_type(&identifier.text, identifier.loc.clone())?;
+                    let type_kind = self.scope.try_get_type(&type_expression_kind)?;
                     let arg = CheckedVariable {
                         name,
                         type_kind: type_kind.clone(),
-                        declaration_loc: identifier.loc.clone(),
+                        declaration_loc: colon.loc.clone(), //TODO: eventually take the loc from the type_expression kind
                     };
 
                     for modifier in modifiers {
@@ -839,7 +861,7 @@ impl TypeChecker {
     }
 
     fn expect_type(expected: TypeKind, actual: TypeKind, loc: Loc) -> Result<(), TypeCheckError> {
-        if expected != actual {
+        if !Self::type_is_coerceable(&actual, &expected) {
             return Err(TypeCheckError::TypeMismatch {
                 expected,
                 actual,
@@ -847,6 +869,18 @@ impl TypeChecker {
             });
         }
         Ok(())
+    }
+
+    fn type_is_coerceable(from: &TypeKind, to: &TypeKind) -> bool {
+        if from == to {
+            return true;
+        }
+        if let TypeKind::Array(_, from_el_type) = from {
+            if let TypeKind::Slice(to_el_type) = to {
+                return Self::type_is_coerceable(from_el_type, to_el_type);
+            }
+        }
+        return false;
     }
 
     fn type_check_expression(
@@ -1078,7 +1112,12 @@ impl TypeChecker {
             ExpressionKind::TypeAnnotation { .. } => {
                 unreachable!("Should be handled in another function")
             }
-            ExpressionKind::FunctionCall { callee, args } => {
+            ExpressionKind::FunctionCall {
+                callee,
+                open_paren: _,
+                args,
+                close_paren: _,
+            } => {
                 let loc = callee.loc.clone();
                 let mut args: Vec<Expression> = args.to_owned();
                 let name = match &callee.kind {
@@ -1136,62 +1175,76 @@ impl TypeChecker {
                 });
             }
             ExpressionKind::ArrayLiteral {
-                open_square,
+                array_type_expression_kind,
+                open_curly,
                 elements,
-                close_square: _,
+                close_curly,
             } => {
-                let mut element_type: Option<TypeKind> = None;
+                let array_type = self.scope.try_get_type(array_type_expression_kind)?;
 
-                let mut checked_elements: Vec<CheckedExpression> = Vec::new();
-                for element in elements {
-                    let checked_element = self.type_check_expression(element)?;
+                match &array_type {
+                    TypeKind::Array(size, element_type) => {
+                        let mut checked_elements: Vec<CheckedExpression> = Vec::new();
 
-                    match &element_type {
-                        Some(el) => Self::expect_type(
-                            el.clone(),
-                            checked_element.type_kind.clone(),
-                            element.loc.clone(),
-                        )?,
-                        None => {
-                            element_type = Some(checked_element.type_kind.clone());
+                        self.scope.assign_context = *element_type.clone();
+
+                        for element in elements {
+                            let checked_element = self.type_check_expression(element)?;
+
+                            Self::expect_type(
+                                *element_type.clone(),
+                                checked_element.type_kind.clone(),
+                                element.kind.get_loc().clone(),
+                            )?;
+
+                            checked_elements.push(checked_element);
                         }
-                    }
-                    checked_elements.push(checked_element);
-                }
+                        self.scope.assign_context = TypeKind::Unit;
+                        if size != &elements.len() {
+                            return Err(TypeCheckError::TypeMismatch {
+                                expected: array_type.clone(),
+                                actual: TypeKind::Array(elements.len(), element_type.clone()),
+                                loc: span_locs(&open_curly.loc, &close_curly.loc),
+                            });
+                        }
 
-                Ok(CheckedExpression {
-                    kind: CheckedExpressionKind::ArrayLiteral {
-                        elements: checked_elements,
-                    },
-                    type_kind: TypeKind::Array(
-                        elements.len(),
-                        Box::new(element_type.expect("TODO: type context")),
-                    ),
-                    loc: open_square.loc.clone(),
-                })
+                        Ok(CheckedExpression {
+                            kind: CheckedExpressionKind::ArrayLiteral {
+                                elements: checked_elements,
+                            },
+                            type_kind: TypeKind::Array(elements.len(), element_type.to_owned()),
+                            loc: expression.kind.get_loc(),
+                        })
+                    }
+                    TypeKind::Slice(element_type) => todo!("Slice literals!"),
+                    _ => unreachable!(),
+                }
             }
             ExpressionKind::ArrayIndex { array, index } => {
                 let checked_array = self.type_check_expression(&array)?;
 
-                if let TypeKind::Array(_, el_type) = &checked_array.type_kind.clone() {
-                    let checked_index = self.type_check_expression(index)?;
+                match &checked_array.type_kind.clone() {
+                    TypeKind::Array(_, el_type) | TypeKind::Slice(el_type) => {
+                        let checked_index = self.type_check_expression(index)?;
 
-                    if !Self::is_integer_type(&checked_index.type_kind) {
-                        return Err(TypeCheckError::TypeMismatch {
-                            expected: TypeKind::U32,
-                            actual: checked_index.type_kind,
+                        if !Self::is_integer_type(&checked_index.type_kind) {
+                            return Err(TypeCheckError::TypeMismatch {
+                                expected: TypeKind::U32,
+                                actual: checked_index.type_kind,
+                                loc: index.loc.clone(),
+                            });
+                        }
+
+                        return Ok(CheckedExpression {
+                            kind: CheckedExpressionKind::ArrayIndex {
+                                array: Box::new(checked_array),
+                                index: Box::new(checked_index),
+                            },
+                            type_kind: *el_type.clone(),
                             loc: index.loc.clone(),
                         });
                     }
-
-                    return Ok(CheckedExpression {
-                        kind: CheckedExpressionKind::ArrayIndex {
-                            array: Box::new(checked_array),
-                            index: Box::new(checked_index),
-                        },
-                        type_kind: *el_type.clone(),
-                        loc: index.loc.clone(),
-                    });
+                    _ => (),
                 }
                 Err(TypeCheckError::CannotIndexType {
                     type_kind: checked_array.type_kind,
@@ -1199,14 +1252,15 @@ impl TypeChecker {
                 })
             }
             ExpressionKind::RecordLiteral {
-                record_name,
+                record_identifier,
                 open_curly,
                 args,
                 close_curly,
             } => {
-                let record_type = self
-                    .scope
-                    .try_get_type(record_name, open_curly.loc.clone())?;
+                let record_name = record_identifier.text.to_owned();
+                let record_type = self.scope.try_get_type(&TypeExpressionKind::Basic {
+                    identifier: record_identifier.clone(),
+                })?;
                 if let TypeKind::Record(name, members) = &record_type {
                     let n_members = members.len();
 
@@ -1287,6 +1341,31 @@ impl TypeChecker {
                 })
             }
             ExpressionKind::FunctionParameter { .. } => unreachable!(),
+            ExpressionKind::Range {
+                lower,
+                dotdot: _,
+                upper,
+            } => {
+                let checked_lower = self.type_check_expression(&lower)?;
+
+                if !Self::is_number_type(&checked_lower.type_kind) {
+                    return Err(TypeCheckError::TypeMismatch {
+                        expected: TypeKind::U32,
+                        actual: checked_lower.type_kind,
+                        loc: lower.loc.clone(),
+                    });
+                }
+
+                let checked_upper = self.type_check_expression(&upper)?;
+
+                Self::expect_type(
+                    checked_lower.type_kind,
+                    checked_upper.type_kind,
+                    upper.loc.clone(),
+                )?;
+
+                todo!()
+            }
         }
     }
 
@@ -1294,11 +1373,13 @@ impl TypeChecker {
         match kind {
             TypeKind::Record(_, _)
             | TypeKind::Array(_, _)
+            | TypeKind::Slice(_)
             | TypeKind::Unit
             | TypeKind::Bool
             | TypeKind::F32
             | TypeKind::F64
-            | TypeKind::String => false,
+            | TypeKind::String
+            | TypeKind::Range(_, _) => false,
             TypeKind::U8
             | TypeKind::U16
             | TypeKind::U32
@@ -1314,9 +1395,11 @@ impl TypeChecker {
         match kind {
             TypeKind::Record(_, _)
             | TypeKind::Array(_, _)
+            | TypeKind::Slice(_)
             | TypeKind::Unit
             | TypeKind::Bool
-            | TypeKind::String => false,
+            | TypeKind::String
+            | TypeKind::Range(_, _) => false,
             TypeKind::U8
             | TypeKind::U16
             | TypeKind::U32

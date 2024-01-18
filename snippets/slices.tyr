@@ -1,0 +1,10 @@
+function foo(x: u32, y: u32): u32 {
+    return x + y;
+}
+
+function main() {
+    var array = [1]u32{ 1 };
+    var integer = 10;
+
+    var answer = array and integer;
+}
