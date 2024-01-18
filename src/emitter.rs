@@ -59,6 +59,15 @@ impl CEmitter {
                 (arr)[index] = value;                                      \
             } while (0)\n",
         )?;
+        //TODO: When slices are a thing, use this struct?
+        // self.out_file.write(
+        //     b"#
+        //     typedef struct Tyr_Slice
+        //     {
+        //             void *data;
+        //             size_t len;
+        //     } Tyr_Slice;",
+        // )?;
         for statement in statements {
             self.emit_statement(&statement)?;
         }
@@ -132,9 +141,8 @@ impl CEmitter {
                 for (i, arg) in args.iter().enumerate() {
                     write!(
                         self.out_file,
-                        "{} {}",
-                        Self::get_c_type(&arg.type_kind),
-                        arg.name
+                        "{}",
+                        Self::get_c_type_function_arg(&arg.type_kind, arg.name.clone()),
                     )?;
                     if i < args.len() - 1 {
                         write!(self.out_file, ", ")?;
@@ -288,7 +296,7 @@ impl CEmitter {
                 Ok(())
             }
             CheckedExpressionKind::ArrayLiteral { elements } => {
-                writeln!(self.out_file, "{{")?;
+                write!(self.out_file, "{{")?;
                 for (i, element) in elements.iter().enumerate() {
                     self.emit_expression(element)?;
 
@@ -301,11 +309,16 @@ impl CEmitter {
                 Ok(())
             }
             CheckedExpressionKind::ArrayIndex { array, index } => {
-                writeln!(self.out_file, "SAFE_ACCESS_ARRAY(")?;
+                //TODO: This didn't work for arrays passed to functions, rethink once arrays are wide pointers
+                // writeln!(self.out_file, "SAFE_ACCESS_ARRAY(")?;
+                // self.emit_expression(&array)?;
+                // writeln!(self.out_file, ", ")?;
+                // self.emit_expression(&index)?;
+                // writeln!(self.out_file, ")")?;
                 self.emit_expression(&array)?;
-                writeln!(self.out_file, ", ")?;
+                writeln!(self.out_file, "[")?;
                 self.emit_expression(&index)?;
-                writeln!(self.out_file, ")")?;
+                writeln!(self.out_file, "]")?;
                 Ok(())
             }
             CheckedExpressionKind::RecordLiteral { arguments } => {
@@ -350,7 +363,39 @@ impl CEmitter {
             TypeKind::Array(el_count, el_type) => {
                 format!("{} [{}]", Self::get_c_type(el_type), el_count)
             }
+            TypeKind::Slice(el_type) => {
+                format!("{}* ", Self::get_c_type(el_type))
+            }
             TypeKind::String => "char*".to_string(),
+            TypeKind::Range(_, _) => todo!(),
+        };
+    }
+
+    fn get_c_type_function_arg(type_kind: &TypeKind, param_name: String) -> String {
+        return match type_kind {
+            TypeKind::Unit => format!("void {}", param_name),
+            TypeKind::Bool => format!("bool {}", param_name),
+            TypeKind::Record(name, _) => name.to_string(),
+            TypeKind::U8 => format!("unsigned char {}", param_name),
+            TypeKind::U16 => format!("unsigned short {}", param_name),
+            TypeKind::U32 => format!("unsigned long {}", param_name),
+            TypeKind::U64 => format!("unsigned long long {}", param_name),
+            TypeKind::I8 => format!("char {}", param_name),
+            TypeKind::I16 => format!("short {}", param_name),
+            TypeKind::I32 => format!("long {}", param_name),
+            TypeKind::I64 => format!("long long {}", param_name),
+            TypeKind::F32 => format!("float {}", param_name),
+            TypeKind::F64 => format!("double {}", param_name),
+            TypeKind::Array(size, el_type) => {
+                format!("{} {}[{}]", Self::get_c_type(el_type), param_name, size)
+                //TODO: does this work for multidim arrays?
+            }
+            TypeKind::Slice(el_type) => {
+                //TODO: should be a wide pointer really
+                format!("{} *{}", Self::get_c_type(el_type), param_name)
+            }
+            TypeKind::String => format!("char* {}", param_name),
+            TypeKind::Range(_, _) => todo!(),
         };
     }
 
@@ -359,6 +404,7 @@ impl CEmitter {
             TypeKind::Unit => panic!("can't format void!"),
             TypeKind::Bool => "%d".to_string(),
             TypeKind::Array(_, _) => todo!(),
+            TypeKind::Slice(_) => todo!(),
             TypeKind::Record(_, _) => todo!(),
             TypeKind::U8 => "%hhu".to_string(),
             TypeKind::U16 => "%hu".to_string(),
@@ -371,6 +417,7 @@ impl CEmitter {
             TypeKind::F32 => "%.2f".to_string(),
             TypeKind::F64 => "%.6lf".to_string(),
             TypeKind::String => "%s".to_string(),
+            TypeKind::Range(_, _) => todo!(),
         };
     }
 }

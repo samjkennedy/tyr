@@ -23,7 +23,7 @@ pub fn format_highlight(loc: &Loc) -> String {
     format!(
         "{}\x1b[91m{}\x1b[0m",
         " ".repeat(loc.col),
-        "^".repeat(loc.len)
+        "~".repeat(loc.len)
     )
 }
 

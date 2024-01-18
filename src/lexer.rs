@@ -57,6 +57,7 @@ pub enum TokenKind {
     WhileKeyword,
     RecordKeyword,
     Dot,
+    DotDot,
     BreakKeyword,
     ContinueKeyword,
     WithKeyword,
@@ -68,6 +69,22 @@ pub struct Loc {
     pub row: usize,
     pub col: usize,
     pub len: usize,
+}
+
+pub fn span_locs(start: &Loc, end: &Loc) -> Loc {
+    if start.file != end.file {
+        panic!("Locs are in different files");
+    }
+    if start.row != end.row {
+        todo!("Handling different rows in span_locs is not implemented yet");
+    }
+
+    Loc {
+        file: start.file.clone(),
+        row: start.row,
+        col: start.col,
+        len: end.col + end.len - start.col,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +143,11 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                     col += int_literal.len();
 
                     // Check for a dot after parsing digits
-                    if let Some('.') = line.chars().nth(col) {
+                    if line.chars().nth(col).is_some()
+                        && line.chars().nth(col).unwrap() == '.'
+                        && line.chars().nth(col + 1).is_some()
+                        && line.chars().nth(col + 1).unwrap() != '.'
+                    {
                         col += 1; // Move past the dot
                         let decimal_part = take_while(&line, col, |c| c.is_digit(10));
                         col += decimal_part.len();
@@ -326,7 +347,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 ']' => {
                     tokens.push(Token::new(
                         TokenKind::CloseSquare,
-                        ")".to_string(),
+                        "]".to_string(),
                         Loc {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
@@ -350,17 +371,23 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                     col += 1;
                 }
                 '.' => {
+                    let (token_kind, advance_by) = match line.chars().nth(col + 1) {
+                        Some(next_char) if next_char == '.' => (TokenKind::DotDot, 2),
+                        _ => (TokenKind::Dot, 1),
+                    };
+
                     tokens.push(Token::new(
-                        TokenKind::Dot,
-                        ".".to_string(),
+                        token_kind,
+                        ".".repeat(advance_by),
                         Loc {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
-                            len: 1,
+                            len: advance_by,
                         },
                     ));
-                    col += 1;
+
+                    col += advance_by;
                 }
                 '{' => {
                     tokens.push(Token::new(

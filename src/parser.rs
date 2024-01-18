@@ -1,4 +1,4 @@
-use crate::lexer::{Loc, Token, TokenKind};
+use crate::lexer::{span_locs, Loc, Token, TokenKind};
 
 #[derive(Debug, Clone)]
 pub struct Statement {
@@ -77,9 +77,10 @@ pub enum ExpressionKind {
         token: Token,
     },
     ArrayLiteral {
-        open_square: Token,
+        array_type_expression_kind: TypeExpressionKind,
+        open_curly: Token,
         elements: Vec<Expression>,
-        close_square: Token,
+        close_curly: Token,
     },
     Assignment {
         lhs: Box<Expression>,
@@ -108,18 +109,20 @@ pub enum ExpressionKind {
     },
     TypeAnnotation {
         colon: Token,
-        identifier: Token, //TODO This will get more complex, e.g. arrays, generics
+        type_expression_kind: TypeExpressionKind,
     },
     FunctionCall {
         callee: Box<Expression>,
+        open_paren: Token,
         args: Vec<Expression>,
+        close_paren: Token,
     },
     ArrayIndex {
         array: Box<Expression>,
         index: Box<Expression>,
     },
     RecordLiteral {
-        record_name: String,
+        record_identifier: Token,
         open_curly: Token,
         args: Vec<Expression>,
         close_curly: Token,
@@ -129,6 +132,115 @@ pub enum ExpressionKind {
         dot: Token,
         member_identifier: Token,
     },
+    Range {
+        lower: Box<Expression>,
+        dotdot: Token,
+        upper: Box<Expression>,
+    },
+}
+
+pub trait Location {
+    fn get_loc(&self) -> Loc;
+}
+
+impl Location for ExpressionKind {
+    fn get_loc(&self) -> Loc {
+        match self {
+            ExpressionKind::BoolLiteral { token }
+            | ExpressionKind::IntLiteral { token }
+            | ExpressionKind::RealLiteral { token }
+            | ExpressionKind::StringLiteral { token } => token.loc.clone(),
+            ExpressionKind::ArrayLiteral {
+                array_type_expression_kind,
+                open_curly,
+                elements,
+                close_curly,
+            } => return span_locs(&array_type_expression_kind.get_loc(), &close_curly.loc),
+            ExpressionKind::Assignment { lhs, equals, rhs } => todo!(),
+            ExpressionKind::FunctionParameter {
+                modifiers,
+                identifier,
+                type_annotation,
+            } => todo!(),
+            ExpressionKind::Binary { left, op, right } => {
+                span_locs(&left.kind.get_loc(), &right.kind.get_loc())
+            }
+            ExpressionKind::Unary { op, operand } => todo!(),
+            ExpressionKind::Parenthesised { expression } => todo!(),
+            ExpressionKind::Variable { identifier } => identifier.loc.clone(),
+            ExpressionKind::TypeAnnotation {
+                colon,
+                type_expression_kind,
+            } => todo!(),
+            ExpressionKind::FunctionCall {
+                callee,
+                open_paren,
+                args,
+                close_paren,
+            } => {
+                return span_locs(&callee.kind.get_loc(), &close_paren.loc);
+            }
+            ExpressionKind::ArrayIndex { array, index } => todo!(),
+            ExpressionKind::RecordLiteral {
+                record_identifier,
+                open_curly,
+                args,
+                close_curly,
+            } => todo!(),
+            ExpressionKind::Accessor {
+                accessee,
+                dot,
+                member_identifier,
+            } => todo!(),
+            ExpressionKind::Range {
+                lower,
+                dotdot,
+                upper,
+            } => todo!(),
+        }
+    }
+}
+
+//TODO: trait Locatable or something that calculates the loc for an expression or statement
+
+#[derive(Debug, Clone)]
+pub enum TypeExpressionKind {
+    //f32, MyRecord, etc
+    Basic {
+        identifier: Token,
+    },
+    // [5]i32, [5][6]f32, [2]MyRecord, etc
+    Array {
+        open_square: Token,
+        length: usize,
+        close_square: Token,
+        element_type: Box<TypeExpressionKind>,
+    },
+    // []i32, [][6]f32, [][]u8, []MyRecord, etc
+    Slice {
+        open_square: Token,
+        close_square: Token,
+        element_type: Box<TypeExpressionKind>,
+    },
+}
+
+impl Location for TypeExpressionKind {
+    fn get_loc(&self) -> Loc {
+        match self {
+            TypeExpressionKind::Basic { identifier } => identifier.loc.clone(),
+            TypeExpressionKind::Array {
+                open_square,
+                length,
+                close_square,
+                element_type,
+            } => span_locs(&open_square.loc, &element_type.get_loc()),
+            TypeExpressionKind::Slice {
+                open_square,
+                close_square,
+                element_type,
+            } => todo!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -463,7 +575,10 @@ impl Parser {
         while let Some(current_token) = tokens.peek() {
             match current_token.kind {
                 TokenKind::CloseCurly => break,
-                _ => statements.push(self.parse_statement(tokens)?),
+                _ => {
+                    let statement = self.parse_statement(tokens)?;
+                    statements.push(statement);
+                }
             }
         }
         Self::expect_token(tokens, TokenKind::CloseCurly)?;
@@ -478,14 +593,60 @@ impl Parser {
         tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
     ) -> Result<Expression, ParseError> {
         let colon = Self::expect_token(tokens, TokenKind::Colon)?;
-        let type_identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
+        let type_expression_kind = Self::parse_type_expression_kind(tokens)?;
         Ok(Expression {
             kind: ExpressionKind::TypeAnnotation {
                 colon: colon.clone(),
-                identifier: type_identifier,
+                type_expression_kind,
             },
             loc: colon.loc.clone(),
         })
+    }
+
+    fn parse_type_expression_kind(
+        tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
+    ) -> Result<TypeExpressionKind, ParseError> {
+        if let Some(token) = tokens.next() {
+            match &token.kind {
+                TokenKind::Identifier => Ok(TypeExpressionKind::Basic {
+                    identifier: token.clone(),
+                }),
+                TokenKind::OpenSquare => {
+                    let open_square = token;
+
+                    let next = Self::next_token(tokens)?;
+
+                    match next.kind {
+                        TokenKind::IntLiteral => {
+                            let length_token = next;
+                            let close_square = Self::expect_token(tokens, TokenKind::CloseSquare)?;
+
+                            let element_type_kind = Self::parse_type_expression_kind(tokens)?;
+
+                            return Ok(TypeExpressionKind::Array {
+                                open_square: open_square.clone(),
+                                length: length_token.text.parse().expect("should not fail"),
+                                close_square,
+                                element_type: Box::new(element_type_kind),
+                            });
+                        }
+                        TokenKind::CloseSquare => {
+                            let element_type_kind = Self::parse_type_expression_kind(tokens)?;
+
+                            return Ok(TypeExpressionKind::Slice {
+                                open_square: open_square.clone(),
+                                close_square: token.clone(),
+                                element_type: Box::new(element_type_kind),
+                            });
+                        }
+                        _ => return Err(ParseError::UnexpectedToken(next)),
+                    }
+                }
+                _ => Err(ParseError::UnexpectedToken(token.clone())),
+            }
+        } else {
+            Err(ParseError::UnexpectedEOF)
+        }
     }
 
     fn get_unary_operator_precedence(kind: &TokenKind) -> usize {
@@ -631,10 +792,11 @@ impl Parser {
                         TokenKind::OpenCurly => match left.kind {
                             ExpressionKind::Variable { .. } if self.allow_record_literals => {
                                 left = self.parse_record_literal(left, tokens)?
-                            } //TODO: This gets toom eager in things like while x < `n {}`
+                            }
                             _ => return Ok(left),
                         },
                         TokenKind::Dot => left = Self::parse_accessor(left, tokens)?,
+                        TokenKind::DotDot => left = self.parse_range(left, tokens)?,
                         _ => return Ok(left),
                     };
                     continue;
@@ -679,6 +841,25 @@ impl Parser {
         })
     }
 
+    fn parse_range(
+        &mut self,
+        lower: Expression,
+        tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
+    ) -> Result<Expression, ParseError> {
+        let dotdot = Self::expect_token(tokens, TokenKind::DotDot)?;
+        let loc = dotdot.loc.clone();
+        let upper = self.parse_binary_expression(tokens, 0)?;
+
+        Ok(Expression {
+            kind: ExpressionKind::Range {
+                lower: Box::new(lower),
+                dotdot,
+                upper: Box::new(upper),
+            },
+            loc,
+        })
+    }
+
     fn parse_record_literal(
         &mut self,
         identifier: Expression,
@@ -703,7 +884,7 @@ impl Parser {
 
             return Ok(Expression {
                 kind: ExpressionKind::RecordLiteral {
-                    record_name: identifier.text,
+                    record_identifier: identifier,
                     open_curly,
                     args,
                     close_curly,
@@ -764,22 +945,25 @@ impl Parser {
 
         let mut args: Vec<Expression> = Vec::new();
 
-        Self::expect_token(tokens, TokenKind::OpenParen)?;
+        let open_paren = Self::expect_token(tokens, TokenKind::OpenParen)?;
 
+        let mut close_paren: Option<Token> = None;
         if tokens.peek().is_some() && tokens.peek().unwrap().kind == TokenKind::CloseParen {
-            Self::expect_token(tokens, TokenKind::CloseParen)?;
+            close_paren = Some(Self::expect_token(tokens, TokenKind::CloseParen)?);
         } else {
-            while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseParen {
+            while close_paren.is_none()
+                && tokens.peek().is_some()
+                && tokens.peek().unwrap().kind != TokenKind::CloseParen
+            {
                 self.allow_record_literals = true;
                 args.push(self.parse_binary_expression(tokens, 0)?);
                 self.allow_record_literals = false;
 
-                match tokens.next() {
+                let token = tokens.next();
+                match token {
                     Some(token) => match token.kind {
                         TokenKind::Comma => {}
-                        TokenKind::CloseParen => {
-                            break;
-                        }
+                        TokenKind::CloseParen => close_paren = Some(token.clone()),
                         _ => return Err(ParseError::UnexpectedToken(token.clone())),
                     },
                     None => return Err(ParseError::UnexpectedEOF),
@@ -790,7 +974,9 @@ impl Parser {
         return Ok(Expression {
             kind: ExpressionKind::FunctionCall {
                 callee: Box::new(callee),
+                open_paren,
                 args,
+                close_paren: close_paren.unwrap(),
             },
             loc,
         });
@@ -800,6 +986,42 @@ impl Parser {
         &mut self,
         tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
     ) -> Result<Expression, ParseError> {
+        //This one needs me to not advance the iterator
+        if let Some(token) = tokens.peek() {
+            let token_loc = token.loc.clone();
+            match &token.kind {
+                TokenKind::OpenSquare => {
+                    let array_type_expression_kind = Self::parse_type_expression_kind(tokens)?;
+
+                    let open_curly = Self::expect_token(tokens, TokenKind::OpenCurly)?;
+
+                    let mut elements: Vec<Expression> = Vec::new();
+                    while tokens.peek().is_some()
+                        && tokens.peek().unwrap().kind != TokenKind::CloseCurly
+                    {
+                        elements.push(self.parse_binary_expression(tokens, 0)?);
+                        if tokens.peek().is_some()
+                            && tokens.peek().unwrap().kind != TokenKind::CloseCurly
+                        {
+                            Self::expect_token(tokens, TokenKind::Comma)?;
+                        }
+                    }
+                    let close_curly = Self::expect_token(tokens, TokenKind::CloseCurly)?;
+
+                    return Ok(Expression {
+                        kind: ExpressionKind::ArrayLiteral {
+                            array_type_expression_kind,
+                            open_curly,
+                            elements,
+                            close_curly,
+                        },
+                        loc: token_loc,
+                    });
+                }
+                _ => {}
+            }
+        }
+        //These ones do...
         if let Some(current_token) = tokens.next() {
             return match current_token.kind {
                 TokenKind::TrueKeyword | TokenKind::FalseKeyword => Ok(Expression {
@@ -842,30 +1064,6 @@ impl Parser {
                         Err(ParseError::UnexpectedEOF)
                     }
                 }
-                TokenKind::OpenSquare => {
-                    let open_square = current_token.clone();
-                    let mut elements: Vec<Expression> = Vec::new();
-                    while tokens.peek().is_some()
-                        && tokens.peek().unwrap().kind != TokenKind::CloseSquare
-                    {
-                        elements.push(self.parse_binary_expression(tokens, 0)?);
-                        if tokens.peek().is_some()
-                            && tokens.peek().unwrap().kind != TokenKind::CloseSquare
-                        {
-                            Self::expect_token(tokens, TokenKind::Comma)?;
-                        }
-                    }
-                    let close_square = Self::expect_token(tokens, TokenKind::CloseSquare)?;
-
-                    Ok(Expression {
-                        kind: ExpressionKind::ArrayLiteral {
-                            open_square,
-                            elements,
-                            close_square,
-                        },
-                        loc: current_token.loc.clone(),
-                    })
-                }
                 TokenKind::Identifier => {
                     let loc = current_token.loc.clone();
                     Ok(Expression {
@@ -875,7 +1073,7 @@ impl Parser {
                         loc,
                     })
                 }
-                _ => Err(ParseError::UnexpectedToken(current_token.clone())),
+                _ => Err(ParseError::UnexpectedToken(tokens.next().unwrap().clone())),
             };
         }
         Err(ParseError::UnexpectedEOF)
@@ -891,6 +1089,15 @@ impl Parser {
                 expected: kind,
                 actual: token.clone(),
             }),
+            None => Err(ParseError::UnexpectedEOF),
+        }
+    }
+
+    fn next_token(
+        tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
+    ) -> Result<Token, ParseError> {
+        match tokens.next() {
+            Some(token) => Ok(token.clone()),
             None => Err(ParseError::UnexpectedEOF),
         }
     }
