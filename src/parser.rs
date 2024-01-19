@@ -1,4 +1,7 @@
-use crate::lexer::{span_locs, Loc, Token, TokenKind};
+use crate::{
+    lexer::{span_locs, Loc, Token, TokenKind},
+    type_checker::{CheckedExpression, CheckedStatement},
+};
 
 #[derive(Debug, Clone)]
 pub struct Statement {
@@ -56,6 +59,14 @@ pub enum StatementKind {
         enum_keyword: Token,
         identifier: Token,
         variants: Vec<Token>,
+    },
+    Match {
+        match_keyword: Token,
+        expression: Expression,
+        cases: Box<Statement>,
+    },
+    MatchCases {
+        cases: Vec<Expression>,
     },
     Break,
     Continue,
@@ -147,6 +158,11 @@ pub enum ExpressionKind {
         dotdot: Token,
         upper: Box<Expression>,
     },
+    MatchCase {
+        pattern: Box<Expression>,
+        fat_arrow: Token,
+        result: Box<Expression>,
+    },
 }
 
 pub trait Location {
@@ -203,7 +219,9 @@ impl Location for ExpressionKind {
                 accessee,
                 dot,
                 member_identifier,
-            } => todo!(),
+            } => {
+                return span_locs(&accessee.kind.get_loc(), &member_identifier.loc);
+            }
             ExpressionKind::Range {
                 lower,
                 dotdot,
@@ -214,6 +232,11 @@ impl Location for ExpressionKind {
                 colon_colon: _,
                 member,
             } => span_locs(&namespace.loc, &member.kind.get_loc()),
+            ExpressionKind::MatchCase {
+                pattern,
+                fat_arrow: _,
+                result,
+            } => span_locs(&pattern.kind.get_loc(), &result.kind.get_loc()),
         }
     }
 }
@@ -590,6 +613,22 @@ impl Parser {
                         enum_keyword,
                         identifier,
                         variants,
+                    },
+                    loc,
+                })
+            }
+            TokenKind::MatchKeyword => {
+                let match_keyword = Self::expect_token(tokens, TokenKind::MatchKeyword)?;
+                let loc = match_keyword.loc.clone();
+                let expression = self.parse_binary_expression(tokens, 0)?;
+
+                let cases = self.parse_match_cases(tokens)?;
+
+                Ok(Statement {
+                    kind: StatementKind::Match {
+                        match_keyword,
+                        expression,
+                        cases: Box::new(cases),
                     },
                     loc,
                 })
@@ -1033,6 +1072,38 @@ impl Parser {
                 close_paren: close_paren.unwrap(),
             },
         });
+    }
+
+    fn parse_match_cases(
+        &mut self,
+        tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
+    ) -> Result<Statement, ParseError> {
+        let open_curly = Self::expect_token(tokens, TokenKind::OpenCurly)?;
+
+        let mut cases: Vec<Expression> = Vec::new();
+        while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
+            let pattern = self.parse_binary_expression(tokens, 0)?;
+            let fat_arrow = Self::expect_token(tokens, TokenKind::FatArrow)?;
+            let result = self.parse_binary_expression(tokens, 0)?;
+
+            cases.push(Expression {
+                kind: ExpressionKind::MatchCase {
+                    pattern: Box::new(pattern),
+                    fat_arrow,
+                    result: Box::new(result),
+                },
+            });
+
+            if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
+                Self::expect_token(tokens, TokenKind::Comma)?;
+            }
+        }
+        let close_curly = Self::expect_token(tokens, TokenKind::CloseCurly)?;
+
+        Ok(Statement {
+            kind: StatementKind::MatchCases { cases },
+            loc: span_locs(&open_curly.loc, &close_curly.loc),
+        })
     }
 
     fn parse_expression(

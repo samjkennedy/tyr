@@ -11,15 +11,19 @@ enum TrafficLight {
 }
 
 function print_color(c: Color) {
-    print(c);
+    match c {
+        Color::Red => print("Red"),
+        Color::Green => print("Green"),
+        Color::Blue => print("Blue"),
+    }
 }
 
 function main() {
     var c = Color::Red;
-    print_color(c);
-    c = Color::Green;
+
     print_color(c);
     print_color(Color::Blue);
 
-    print(TrafficLight::Green);
+    c = Color::Green;
+    c.print_color();
 }

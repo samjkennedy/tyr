@@ -201,6 +201,29 @@ impl CEmitter {
                 }
                 writeln!(self.out_file, "}} {};", name)?;
             }
+            CheckedStatementKind::MatchCases { cases } => {
+                for case in cases {
+                    match &case.kind {
+                        CheckedExpressionKind::MatchCase { pattern, result } => {
+                            write!(self.out_file, "     case ")?;
+                            self.emit_expression(pattern)?;
+                            writeln!(self.out_file, ":")?;
+                            writeln!(self.out_file, "{{")?;
+                            self.emit_expression(&result)?;
+                            writeln!(self.out_file, ";}};")?;
+                            writeln!(self.out_file, "break;")?;
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+            CheckedStatementKind::Match { expression, cases } => {
+                write!(self.out_file, "switch (")?;
+                self.emit_expression(expression)?;
+                writeln!(self.out_file, ") {{")?;
+                self.emit_statement(&cases)?;
+                writeln!(self.out_file, "}}")?;
+            }
         }
         Ok(())
     }
@@ -354,6 +377,7 @@ impl CEmitter {
             CheckedExpressionKind::StaticAccessor { name, member } => {
                 write!(self.out_file, "{}_{}", name, member.name) //TODO member should be an expression we handle differently
             }
+            CheckedExpressionKind::MatchCase { pattern, result } => todo!(),
         }
     }
 
