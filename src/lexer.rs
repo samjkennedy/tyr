@@ -63,6 +63,8 @@ pub enum TokenKind {
     WithKeyword,
     EnumKeyword,
     ColonColon,
+    MatchKeyword,
+    FatArrow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +80,7 @@ pub fn span_locs(start: &Loc, end: &Loc) -> Loc {
         panic!("Locs are in different files");
     }
     if start.row != end.row {
-        todo!("Handling different rows in span_locs is not implemented yet");
+        return start.clone();
     }
 
     Loc {
@@ -420,6 +422,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 '=' => {
                     let (token_kind, advance_by) = match line.chars().nth(col + 1) {
                         Some(next_char) if next_char == '=' => (TokenKind::EqualsEquals, 2),
+                        Some(next_char) if next_char == '>' => (TokenKind::FatArrow, 2),
                         _ => (TokenKind::Equals, 1),
                     };
 
@@ -568,6 +571,7 @@ fn match_keyword(identifier: &String) -> Option<TokenKind> {
         "continue" => Some(TokenKind::ContinueKeyword),
         "with" => Some(TokenKind::WithKeyword),
         "enum" => Some(TokenKind::EnumKeyword),
+        "match" => Some(TokenKind::MatchKeyword),
         _ => None,
     };
 }

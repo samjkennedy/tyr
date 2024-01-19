@@ -1,4 +1,4 @@
-use core::{fmt, panic};
+use core::{fmt, panic, time};
 use std::collections::HashMap;
 
 use crate::{
@@ -189,6 +189,13 @@ pub enum CheckedStatementKind {
     },
     Break,
     Continue,
+    MatchCases {
+        cases: Vec<CheckedExpression>,
+    },
+    Match {
+        expression: CheckedExpression,
+        cases: Box<CheckedStatement>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +281,10 @@ pub enum CheckedExpressionKind {
     StaticAccessor {
         name: String,
         member: CheckedVariable,
+    },
+    MatchCase {
+        pattern: Box<CheckedExpression>,
+        result: Box<CheckedExpression>,
     },
 }
 
@@ -810,6 +821,79 @@ impl TypeChecker {
                     },
                 })
             }
+            StatementKind::MatchCases { cases } => {
+                let mut checked_cases = Vec::new();
+                for case in cases {
+                    checked_cases.push(self.type_check_expression(case)?);
+                }
+                Ok(CheckedStatement {
+                    kind: CheckedStatementKind::MatchCases {
+                        cases: checked_cases,
+                    },
+                })
+            }
+            StatementKind::Match {
+                match_keyword: _,
+                expression,
+                cases,
+            } => {
+                let checked_expression = self.type_check_expression(expression)?;
+                let checked_cases =
+                    self.type_check_match_cases(cases, checked_expression.type_kind.clone())?;
+                Ok(CheckedStatement {
+                    kind: CheckedStatementKind::Match {
+                        expression: checked_expression,
+                        cases: Box::new(checked_cases),
+                    },
+                })
+            }
+        }
+    }
+
+    fn type_check_match_cases(
+        &mut self,
+        cases: &Statement,
+        expression_type_kind: TypeKind,
+    ) -> Result<CheckedStatement, TypeCheckError> {
+        if let StatementKind::MatchCases { cases } = &cases.kind {
+            let mut checked_cases = Vec::new();
+            for case in cases {
+                if let ExpressionKind::MatchCase {
+                    pattern,
+                    fat_arrow: _,
+                    result,
+                } = &case.kind
+                {
+                    let checked_pattern = self.type_check_expression(&pattern)?;
+                    Self::expect_type(
+                        expression_type_kind.clone(),
+                        checked_pattern.type_kind.clone(),
+                        pattern.kind.get_loc(),
+                    )?;
+
+                    let checked_result = self.type_check_expression(&result)?;
+
+                    let checked_case = CheckedExpression {
+                        kind: CheckedExpressionKind::MatchCase {
+                            pattern: Box::new(checked_pattern),
+                            result: Box::new(checked_result),
+                        },
+                        type_kind: TypeKind::Unit, //TODO: allow returning values from matches
+                        loc: case.kind.get_loc(),
+                    };
+
+                    checked_cases.push(checked_case);
+                } else {
+                    unreachable!()
+                }
+            }
+            return Ok(CheckedStatement {
+                kind: CheckedStatementKind::MatchCases {
+                    cases: checked_cases,
+                },
+            });
+        } else {
+            unreachable!()
         }
     }
 
@@ -1487,6 +1571,11 @@ impl TypeChecker {
                 }
                 _ => todo!(),
             },
+            ExpressionKind::MatchCase {
+                pattern,
+                fat_arrow,
+                result,
+            } => todo!(),
         }
     }
 
@@ -1659,7 +1748,9 @@ impl TypeChecker {
             | CheckedStatementKind::Record { .. }
             | CheckedStatementKind::Enum { .. }
             | CheckedStatementKind::Break
-            | CheckedStatementKind::Continue => false,
+            | CheckedStatementKind::Continue
+            | CheckedStatementKind::MatchCases { .. }
+            | CheckedStatementKind::Match { .. } => false,
         }
     }
 
