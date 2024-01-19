@@ -1,0 +1,29 @@
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+enum TrafficLight {
+    Red,
+    Yellow,
+    Green
+}
+
+function print_color(c: Color) {
+    match c {
+        Color::Red => print("Red"),
+        Color::Green => print("Green"),
+        Color::Blue => print("Blue"),
+    }
+}
+
+function main() {
+    var c = Color::Red;
+
+    print_color(c);
+    print_color(Color::Blue);
+
+    c = Color::Green;
+    c.print_color();
+}

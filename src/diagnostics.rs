@@ -192,7 +192,7 @@ pub fn format_typecheck_error(error: &TypeCheckError) -> String {
                 highlight,
             )
         }
-        TypeCheckError::TypeAlreadyDeclared { record_name, loc } => {
+        TypeCheckError::TypeAlreadyDeclared { type_name, loc } => {
             let error_line = get_error_line(loc);
             let highlight = format!(
                 "    |\n{}\n    |{}",
@@ -202,7 +202,7 @@ pub fn format_typecheck_error(error: &TypeCheckError) -> String {
             format!(
                 "{} type `{}` already declared in scope {}\n{}",
                 log_level,
-                record_name,
+                type_name,
                 format_location(loc),
                 highlight,
             )

@@ -194,6 +194,36 @@ impl CEmitter {
             }
             CheckedStatementKind::Break => writeln!(self.out_file, "break;")?,
             CheckedStatementKind::Continue => writeln!(self.out_file, "continue;")?,
+            CheckedStatementKind::Enum { name, variants } => {
+                writeln!(self.out_file, "typedef enum {} {{", name)?;
+                for variant in variants {
+                    writeln!(self.out_file, "{}_{},", name, variant)?;
+                }
+                writeln!(self.out_file, "}} {};", name)?;
+            }
+            CheckedStatementKind::MatchCases { cases } => {
+                for case in cases {
+                    match &case.kind {
+                        CheckedExpressionKind::MatchCase { pattern, result } => {
+                            write!(self.out_file, "     case ")?;
+                            self.emit_expression(pattern)?;
+                            writeln!(self.out_file, ":")?;
+                            writeln!(self.out_file, "{{")?;
+                            self.emit_expression(&result)?;
+                            writeln!(self.out_file, ";}};")?;
+                            writeln!(self.out_file, "break;")?;
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+            CheckedStatementKind::Match { expression, cases } => {
+                write!(self.out_file, "switch (")?;
+                self.emit_expression(expression)?;
+                writeln!(self.out_file, ") {{")?;
+                self.emit_statement(&cases)?;
+                writeln!(self.out_file, "}}")?;
+            }
         }
         Ok(())
     }
@@ -253,18 +283,20 @@ impl CEmitter {
                 write!(self.out_file, ")")?;
                 Ok(())
             }
-            CheckedExpressionKind::Variable { name } => write!(self.out_file, "{}", name),
+            CheckedExpressionKind::Variable { variable } => {
+                write!(self.out_file, "{}", variable.name)
+            }
             CheckedExpressionKind::Assignment { lhs, rhs } => {
-                if let CheckedExpressionKind::ArrayIndex { array, index } = &lhs.kind {
-                    writeln!(self.out_file, "SAFE_SET_ARRAY(")?;
-                    self.emit_expression(&array)?;
-                    writeln!(self.out_file, ", ")?;
-                    self.emit_expression(&index)?;
-                    writeln!(self.out_file, ", ")?;
-                    self.emit_expression(&rhs)?;
-                    writeln!(self.out_file, ")")?;
-                    return Ok(());
-                }
+                // if let CheckedExpressionKind::ArrayIndex { array, index } = &lhs.kind {
+                //     writeln!(self.out_file, "SAFE_SET_ARRAY(")?;
+                //     self.emit_expression(&array)?;
+                //     writeln!(self.out_file, ", ")?;
+                //     self.emit_expression(&index)?;
+                //     writeln!(self.out_file, ", ")?;
+                //     self.emit_expression(&rhs)?;
+                //     writeln!(self.out_file, ")")?;
+                //     return Ok(());
+                // }
 
                 self.emit_expression(lhs)?;
                 write!(self.out_file, " = ")?;
@@ -342,6 +374,10 @@ impl CEmitter {
                 write!(self.out_file, ".{}", member)?;
                 Ok(())
             }
+            CheckedExpressionKind::StaticAccessor { name, member } => {
+                write!(self.out_file, "{}_{}", name, member.name) //TODO member should be an expression we handle differently
+            }
+            CheckedExpressionKind::MatchCase { pattern, result } => todo!(),
         }
     }
 
@@ -350,6 +386,7 @@ impl CEmitter {
             TypeKind::Unit => "void".to_string(),
             TypeKind::Bool => "bool".to_string(),
             TypeKind::Record(name, _) => name.to_string(),
+            TypeKind::Enum(name, _) => name.to_string(),
             TypeKind::U8 => "unsigned char".to_string(),
             TypeKind::U16 => "unsigned short".to_string(),
             TypeKind::U32 => "unsigned long".to_string(),
@@ -375,7 +412,8 @@ impl CEmitter {
         return match type_kind {
             TypeKind::Unit => format!("void {}", param_name),
             TypeKind::Bool => format!("bool {}", param_name),
-            TypeKind::Record(name, _) => name.to_string(),
+            TypeKind::Record(name, _) => format!("{} {}", name, param_name),
+            TypeKind::Enum(name, _) => format!("{} {}", name, param_name),
             TypeKind::U8 => format!("unsigned char {}", param_name),
             TypeKind::U16 => format!("unsigned short {}", param_name),
             TypeKind::U32 => format!("unsigned long {}", param_name),
@@ -406,6 +444,7 @@ impl CEmitter {
             TypeKind::Array(_, _) => todo!(),
             TypeKind::Slice(_) => todo!(),
             TypeKind::Record(_, _) => todo!(),
+            TypeKind::Enum(_, _) => "%d".to_string(),
             TypeKind::U8 => "%hhu".to_string(),
             TypeKind::U16 => "%hu".to_string(),
             TypeKind::U32 => "%lu".to_string(),

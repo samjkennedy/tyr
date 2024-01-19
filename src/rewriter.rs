@@ -118,6 +118,31 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
         CheckedStatementKind::Continue => Ok(CheckedStatement {
             kind: CheckedStatementKind::Continue,
         }),
+        CheckedStatementKind::Enum { name, variants } => Ok(CheckedStatement {
+            kind: CheckedStatementKind::Enum { name, variants },
+        }),
+        CheckedStatementKind::MatchCases { cases } => {
+            let mut rewritten_cases = Vec::new();
+            for case in cases {
+                rewritten_cases.push(rewrite_expression(case)?);
+            }
+            Ok(CheckedStatement {
+                kind: CheckedStatementKind::MatchCases {
+                    cases: rewritten_cases,
+                },
+            })
+        }
+        CheckedStatementKind::Match { expression, cases } => {
+            let rewritten_expression = rewrite_expression(expression)?;
+            let rewritten_cases = rewrite_statement(*cases)?;
+
+            Ok(CheckedStatement {
+                kind: CheckedStatementKind::Match {
+                    expression: rewritten_expression,
+                    cases: Box::new(rewritten_cases),
+                },
+            })
+        }
     }
 }
 
@@ -206,8 +231,8 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
                 loc: expression.loc,
             })
         }
-        CheckedExpressionKind::Variable { name } => Ok(CheckedExpression {
-            kind: CheckedExpressionKind::Variable { name },
+        CheckedExpressionKind::Variable { variable } => Ok(CheckedExpression {
+            kind: CheckedExpressionKind::Variable { variable },
             type_kind: expression.type_kind,
             loc: expression.loc,
         }),
@@ -260,6 +285,24 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
                 kind: CheckedExpressionKind::Accessor {
                     accessee: Box::new(rewritten_accessee),
                     member,
+                },
+                type_kind: expression.type_kind,
+                loc: expression.loc,
+            })
+        }
+        CheckedExpressionKind::StaticAccessor { name, member } => Ok(CheckedExpression {
+            kind: CheckedExpressionKind::StaticAccessor { name, member },
+            type_kind: expression.type_kind,
+            loc: expression.loc,
+        }),
+        CheckedExpressionKind::MatchCase { pattern, result } => {
+            let rewritten_pattern = rewrite_expression(*pattern)?;
+            let rewritten_result = rewrite_expression(*result)?;
+
+            Ok(CheckedExpression {
+                kind: CheckedExpressionKind::MatchCase {
+                    pattern: Box::new(rewritten_pattern),
+                    result: Box::new(rewritten_result),
                 },
                 type_kind: expression.type_kind,
                 loc: expression.loc,
