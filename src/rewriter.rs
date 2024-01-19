@@ -118,6 +118,9 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
         CheckedStatementKind::Continue => Ok(CheckedStatement {
             kind: CheckedStatementKind::Continue,
         }),
+        CheckedStatementKind::Enum { name, variants } => Ok(CheckedStatement {
+            kind: CheckedStatementKind::Enum { name, variants },
+        }),
     }
 }
 
@@ -206,8 +209,8 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
                 loc: expression.loc,
             })
         }
-        CheckedExpressionKind::Variable { name } => Ok(CheckedExpression {
-            kind: CheckedExpressionKind::Variable { name },
+        CheckedExpressionKind::Variable { variable } => Ok(CheckedExpression {
+            kind: CheckedExpressionKind::Variable { variable },
             type_kind: expression.type_kind,
             loc: expression.loc,
         }),
@@ -265,5 +268,10 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
                 loc: expression.loc,
             })
         }
+        CheckedExpressionKind::StaticAccessor { name, member } => Ok(CheckedExpression {
+            kind: CheckedExpressionKind::StaticAccessor { name, member },
+            type_kind: expression.type_kind,
+            loc: expression.loc,
+        }),
     };
 }

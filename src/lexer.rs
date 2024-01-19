@@ -61,6 +61,8 @@ pub enum TokenKind {
     BreakKeyword,
     ContinueKeyword,
     WithKeyword,
+    EnumKeyword,
+    ColonColon,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -496,17 +498,22 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                     col += advance_by;
                 }
                 ':' => {
+                    let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
+                        Some(next_char) if next_char == ':' => (TokenKind::ColonColon, "::", 2),
+                        _ => (TokenKind::Colon, ":", 1),
+                    };
                     tokens.push(Token::new(
-                        TokenKind::Colon,
-                        ":".to_string(),
+                        token_kind,
+                        text.to_owned(),
                         Loc {
                             file: file_path.to_string_lossy().into_owned(),
                             row,
                             col,
-                            len: 1,
+                            len: advance_by,
                         },
                     ));
-                    col += 1;
+
+                    col += advance_by;
                 }
                 ';' => {
                     tokens.push(Token::new(
@@ -560,6 +567,7 @@ fn match_keyword(identifier: &String) -> Option<TokenKind> {
         "break" => Some(TokenKind::BreakKeyword),
         "continue" => Some(TokenKind::ContinueKeyword),
         "with" => Some(TokenKind::WithKeyword),
+        "enum" => Some(TokenKind::EnumKeyword),
         _ => None,
     };
 }

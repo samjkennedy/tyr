@@ -1,0 +1,25 @@
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+enum TrafficLight {
+    Red,
+    Yellow,
+    Green
+}
+
+function print_color(c: Color) {
+    print(c);
+}
+
+function main() {
+    var c = Color::Red;
+    print_color(c);
+    c = Color::Green;
+    print_color(c);
+    print_color(Color::Blue);
+
+    print(TrafficLight::Green);
+}
