@@ -1,0 +1,10 @@
+record <T>Pair {
+    first:  T,
+    second: T
+}
+
+function main() {
+    var u32_pair = <u32>Pair{ 45, 32 };
+
+    print(u32_pair.first);
+}

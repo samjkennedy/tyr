@@ -859,52 +859,53 @@ impl Parser {
                     },
                 }
             };
-            let loc = left.kind.get_loc().clone();
 
             while let Some(token) = tokens.peek() {
-                let precedence = Self::get_binary_operator_precedence(&token.kind);
-
-                if precedence == 0 || precedence <= parent_precedence {
-                    match token.kind {
-                        TokenKind::Equals => {
-                            let equals = tokens.next().expect("should never fail");
-                            left = self.parse_assignment(left, tokens, equals)?
+                match token.kind {
+                    TokenKind::Equals => {
+                        let equals = tokens.next().expect("should never fail");
+                        left = self.parse_assignment(left, tokens, equals)?
+                    }
+                    TokenKind::OpenParen => left = self.parse_function_call(left, tokens)?,
+                    TokenKind::OpenSquare => left = self.parse_array_index(left, tokens)?,
+                    TokenKind::OpenCurly => match left.kind {
+                        ExpressionKind::Variable { .. } if self.allow_record_literals => {
+                            left = self.parse_record_literal(left, tokens)?
                         }
-                        TokenKind::OpenParen => left = self.parse_function_call(left, tokens)?,
-                        TokenKind::OpenSquare => left = self.parse_array_index(left, tokens)?,
-                        TokenKind::OpenCurly => match left.kind {
-                            ExpressionKind::Variable { .. } if self.allow_record_literals => {
-                                left = self.parse_record_literal(left, tokens)?
-                            }
-                            _ => return Ok(left),
-                        },
-                        TokenKind::Dot => left = Self::parse_accessor(left, tokens)?,
-                        TokenKind::DotDot => left = self.parse_range(left, tokens)?,
-                        TokenKind::ColonColon => match left.kind {
-                            ExpressionKind::Variable { identifier } => {
-                                left = self.parse_static_accessor(identifier, tokens)?;
-                            }
-                            _ => return Err(ParseError::CannotStaticallyAccess(left)),
-                        },
                         _ => return Ok(left),
-                    };
-                    continue;
-                }
+                    },
+                    TokenKind::Dot => left = Self::parse_accessor(left, tokens)?,
+                    TokenKind::DotDot => left = self.parse_range(left, tokens)?,
+                    TokenKind::ColonColon => match left.kind {
+                        ExpressionKind::Variable { identifier } => {
+                            left = self.parse_static_accessor(identifier, tokens)?;
+                        }
+                        _ => return Err(ParseError::CannotStaticallyAccess(left)),
+                    },
+                    _ => {
+                        let precedence = Self::get_binary_operator_precedence(&token.kind);
 
-                let token = tokens.next().expect("should never fail");
-                let binary_op = Self::parse_binary_op(token.clone())?;
-
-                if let Some(_) = tokens.peek() {
-                    let right = self.parse_binary_expression(tokens, precedence)?;
-                    left = Expression {
-                        kind: ExpressionKind::Binary {
-                            left: Box::new(left),
-                            op: binary_op,
-                            right: Box::new(right),
-                        },
-                    };
-                }
+                        if precedence == 0 || precedence <= parent_precedence {
+                            return Ok(left);
+                        }
+                    }
+                };
             }
+
+            let token = tokens.next().expect("should never fail");
+            let binary_op = Self::parse_binary_op(token.clone())?;
+
+            if let Some(_) = tokens.peek() {
+                let right = self.parse_binary_expression(tokens, precedence)?;
+                left = Expression {
+                    kind: ExpressionKind::Binary {
+                        left: Box::new(left),
+                        op: binary_op,
+                        right: Box::new(right),
+                    },
+                };
+            }
+
             Ok(left)
         } else {
             Err(ParseError::UnexpectedEOF)
