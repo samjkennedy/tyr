@@ -91,7 +91,7 @@ pub fn span_locs(start: &Loc, end: &Loc) -> Loc {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
     pub text: String,

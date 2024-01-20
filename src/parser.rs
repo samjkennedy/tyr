@@ -268,6 +268,10 @@ pub enum TypeExpressionKind {
         generic_parameter_types: Vec<TypeExpressionKind>,
         close_angle: Token,
     },
+    GenericParameter {
+        type_name: String,
+        param: Token,
+    },
 }
 
 impl Location for TypeExpressionKind {
@@ -291,6 +295,7 @@ impl Location for TypeExpressionKind {
                 generic_parameter_types,
                 close_angle,
             } => span_locs(&generic_type.get_loc(), &close_angle.loc),
+            TypeExpressionKind::GenericParameter { type_name, param } => param.loc.clone(),
         }
     }
 }

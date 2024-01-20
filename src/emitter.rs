@@ -80,9 +80,9 @@ impl CEmitter {
                             name,
                             generic_params
                                 .iter()
-                                .map(|t| t.to_string())
+                                .map(|t| Self::get_c_type(&t))
                                 .collect::<Vec<String>>()
-                                .join(", ")
+                                .join("_")
                         )?;
                         for member in members {
                             writeln!(
@@ -98,9 +98,9 @@ impl CEmitter {
                             name,
                             generic_params
                                 .iter()
-                                .map(|t| t.to_string())
+                                .map(|t| Self::get_c_type(&t))
                                 .collect::<Vec<String>>()
-                                .join(", ")
+                                .join("_")
                         )?;
                     } else {
                         writeln!(self.out_file, "typedef struct {} {{", name)?;
@@ -432,15 +432,21 @@ impl CEmitter {
         return match type_kind {
             TypeKind::Unit => "void".to_string(),
             TypeKind::Bool => "bool".to_string(),
-            TypeKind::Record(name, generic_params, _) => format!(
-                "{}_{}",
-                name,
-                generic_params
-                    .iter()
-                    .map(|t| t.to_string())
-                    .collect::<Vec<String>>()
-                    .join("_")
-            ),
+            TypeKind::Record(name, generic_params, _) => {
+                if generic_params.is_empty() {
+                    format!("{}", name)
+                } else {
+                    format!(
+                        "{}_{}",
+                        name,
+                        generic_params
+                            .iter()
+                            .map(|t| Self::get_c_type(t))
+                            .collect::<Vec<String>>()
+                            .join("_")
+                    )
+                }
+            }
             TypeKind::Enum(name, _) => name.to_string(),
             TypeKind::U8 => "unsigned char".to_string(),
             TypeKind::U16 => "unsigned short".to_string(),

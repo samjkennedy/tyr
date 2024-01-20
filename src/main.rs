@@ -130,5 +130,5 @@ fn main() {
         .expect("Couldn't make executable");
 
     // Remove the intermediate C file
-    fs::remove_file(&c_file_name).expect("Couldn't remove intermediate C file");
+    //fs::remove_file(&c_file_name).expect("Couldn't remove intermediate C file");
 }

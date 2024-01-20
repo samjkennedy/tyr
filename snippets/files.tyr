@@ -1,0 +1,32 @@
+namespace io {
+
+    record File<T> {
+        ...
+    }
+
+    function open<T>(file_path: string): File<T>? {
+        ...
+    }
+
+    function write<T>(file: File, data: T): File<T> {
+        ...
+    }
+
+    function read<T>(file: File<T>): T {
+        ...
+    }
+
+    function eof<T>(file: File<T>): bool {
+        ...
+    }
+}
+
+with import io;
+
+function main() {
+    var file: File<u8> = open<u8>("my_file.txt")!;
+
+    while not file.eof() {
+        print("{}", file.read());
+    }
+}
