@@ -319,6 +319,26 @@ pub fn format_typecheck_error(error: &TypeCheckError) -> String {
                 highlight,
             )
         }
+        TypeCheckError::ArgLengthMismatch {
+            expected,
+            actual,
+            loc,
+        } => {
+            let error_line = get_error_line(loc);
+            let highlight = format!(
+                "    |\n{}\n    |{}",
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
+            );
+            format!(
+                "{} wrong number of arguments: {}, required: {}, at {}\n{}",
+                log_level,
+                actual,
+                expected,
+                format_location(loc),
+                highlight,
+            )
+        }
     }
 }
 

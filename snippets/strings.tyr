@@ -1,5 +1,5 @@
 function putstring(s: string) {
-    print(s);
+    println(s);
 }
 
 function getstring(): string {

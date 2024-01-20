@@ -18,6 +18,7 @@ pub enum TypeKind {
     U32,
     U64,
     I8,
+    Char,
     I16,
     I32,
     I64,
@@ -30,6 +31,8 @@ pub enum TypeKind {
     Range(Box<TypeKind>, Box<TypeKind>),
     Enum(String, Vec<String>),
     GenericParameter(String),
+    //TMP
+    File,
 }
 
 impl fmt::Display for TypeKind {
@@ -42,6 +45,7 @@ impl fmt::Display for TypeKind {
             TypeKind::U32 => write!(f, "u32"),
             TypeKind::U64 => write!(f, "u64"),
             TypeKind::I8 => write!(f, "i8"),
+            TypeKind::Char => write!(f, "char"),
             TypeKind::I16 => write!(f, "i16"),
             TypeKind::I32 => write!(f, "i32"),
             TypeKind::I64 => write!(f, "i64"),
@@ -76,6 +80,7 @@ impl fmt::Display for TypeKind {
             }
             TypeKind::Enum(name, _) => write!(f, "{}", name),
             TypeKind::GenericParameter(name) => write!(f, "{}", name),
+            TypeKind::File => write!(f, "file"),
         }
     }
 }
@@ -155,6 +160,11 @@ pub enum TypeCheckError {
         loc: Loc,
     },
     WrongNumberOfTypeArguments {
+        expected: usize,
+        actual: usize,
+        loc: Loc,
+    },
+    ArgLengthMismatch {
         expected: usize,
         actual: usize,
         loc: Loc,
@@ -331,7 +341,7 @@ struct Scope {
     variables: HashMap<String, CheckedVariable>,
     functions: HashMap<String, CheckedFunction>,
     lookup_overrides: HashMap<String, (String, CheckedVariable)>,
-    records: HashMap<String, TypeKind>,
+    types: HashMap<String, TypeKind>,
     generic_erasures: HashMap<String, TypeKind>,
     return_context: TypeKind,
     assign_context: Vec<TypeKind>,
@@ -339,17 +349,106 @@ struct Scope {
 
 impl Scope {
     fn new_global_scope() -> Scope {
-        return Scope {
+        let mut scope = Scope {
             parent: None,
             modules: HashMap::new(),
             variables: HashMap::new(),
             functions: HashMap::new(),
             lookup_overrides: HashMap::new(),
-            records: HashMap::new(),
+            types: HashMap::new(),
             generic_erasures: HashMap::new(),
             return_context: TypeKind::Unit,
-            assign_context: Vec::new(),
+            assign_context: vec![TypeKind::Unit],
         };
+
+        // TODO: package this into a module that must be imported
+        scope.types.insert("file".to_owned(), TypeKind::File);
+        // let mode_variants = vec!["Read".to_string(), "Write".to_string()];
+        // let mode_enum = TypeKind::Enum("Mode".to_string(), mode_variants.clone());
+
+        // //This one should really be defined in tyr code
+        // scope.types.insert("Mode".to_string(), mode_enum.clone());
+
+        // let mut module = Scope {
+        //     parent: None,
+        //     modules: HashMap::new(),
+        //     variables: HashMap::new(),
+        //     functions: HashMap::new(),
+        //     lookup_overrides: HashMap::new(),
+        //     types: HashMap::new(),
+        //     generic_erasures: HashMap::new(),
+        //     return_context: TypeKind::Unit,
+        //     assign_context: vec![TypeKind::Unit],
+        // };
+        // for variant in mode_variants {
+        //     module
+        //         .try_declare_variable(
+        //             CheckedVariable {
+        //                 name: variant.to_string(),
+        //                 type_kind: mode_enum.clone(),
+        //                 declaration_loc: Loc {
+        //                     file: "".to_owned(),
+        //                     row: 0,
+        //                     col: 0,
+        //                     len: 0,
+        //                 },
+        //             },
+        //             Loc {
+        //                 file: "".to_owned(),
+        //                 row: 0,
+        //                 col: 0,
+        //                 len: 0,
+        //             },
+        //         )
+        //         .unwrap();
+        // }
+
+        // scope.modules.insert("Mode".to_string(), module);
+
+        scope.functions.insert(
+            "file_open".to_owned(),
+            CheckedFunction {
+                name: "file_open".to_owned(),
+                args: vec![TypeKind::String, TypeKind::String],
+                return_type: Some(TypeKind::File),
+                declaration_loc: Loc {
+                    file: "".to_owned(),
+                    row: 0,
+                    col: 0,
+                    len: 0,
+                },
+            },
+        );
+        scope.functions.insert(
+            "read_char".to_owned(),
+            CheckedFunction {
+                name: "read_char".to_owned(),
+                args: vec![TypeKind::File],
+                return_type: Some(TypeKind::Char),
+                declaration_loc: Loc {
+                    file: "".to_owned(),
+                    row: 0,
+                    col: 0,
+                    len: 0,
+                },
+            },
+        );
+        scope.functions.insert(
+            "close".to_owned(),
+            CheckedFunction {
+                name: "close".to_owned(),
+                args: vec![TypeKind::File],
+                return_type: None,
+                declaration_loc: Loc {
+                    file: "".to_owned(),
+                    row: 0,
+                    col: 0,
+                    len: 0,
+                },
+            },
+        );
+
+        return scope;
     }
 
     fn new_inner_scope(parent: Scope) -> Scope {
@@ -361,7 +460,7 @@ impl Scope {
             variables: HashMap::new(),
             functions: HashMap::new(),
             lookup_overrides: HashMap::new(),
-            records: HashMap::new(),
+            types: HashMap::new(),
             generic_erasures: HashMap::new(),
         };
     }
@@ -466,27 +565,27 @@ impl Scope {
     fn try_declare_type(&mut self, type_kind: TypeKind, loc: Loc) -> Result<(), TypeCheckError> {
         match &type_kind {
             TypeKind::Record(name, ..) => {
-                if self.records.contains_key(name) {
+                if self.types.contains_key(name) {
                     return Err(TypeCheckError::TypeAlreadyDeclared {
                         type_name: name.clone(),
                         loc: loc.clone(),
                     });
                 }
-                self.records.insert(name.clone(), type_kind);
+                self.types.insert(name.clone(), type_kind);
                 return Ok(());
             }
             TypeKind::GenericParameter(name) => {
-                if self.records.contains_key(name) {
+                if self.types.contains_key(name) {
                     return Err(TypeCheckError::TypeAlreadyDeclared {
                         type_name: name.clone(),
                         loc: loc.clone(),
                     });
                 }
-                self.records.insert(name.clone(), type_kind);
+                self.types.insert(name.clone(), type_kind);
                 return Ok(());
             }
             TypeKind::Enum(name, variants) => {
-                if self.records.contains_key(name) {
+                if self.types.contains_key(name) {
                     return Err(TypeCheckError::TypeAlreadyDeclared {
                         type_name: name.clone(),
                         loc: loc.clone(),
@@ -498,10 +597,10 @@ impl Scope {
                         loc: loc.clone(),
                     });
                 }
-                self.records.insert(name.clone(), type_kind.clone());
+                self.types.insert(name.clone(), type_kind.clone());
 
                 let mut module = Scope::new_global_scope();
-                module.records.insert(name.clone(), type_kind.clone());
+                module.types.insert(name.clone(), type_kind.clone());
                 for variant in variants {
                     module.try_declare_variable(
                         CheckedVariable {
@@ -557,6 +656,7 @@ impl Scope {
                     "u32" => Ok(TypeKind::U32),
                     "u64" => Ok(TypeKind::U64),
                     "i8" => Ok(TypeKind::I8),
+                    "char" => Ok(TypeKind::Char),
                     "i16" => Ok(TypeKind::I16),
                     "i32" => Ok(TypeKind::I32),
                     "i64" => Ok(TypeKind::I64),
@@ -564,7 +664,7 @@ impl Scope {
                     "f64" => Ok(TypeKind::F64),
                     "string" => Ok(TypeKind::String),
                     _ => {
-                        return match self.records.get(name) {
+                        return match self.types.get(name) {
                             Some(type_kind) => Ok(type_kind.clone()),
                             None => match &self.parent {
                                 Some(parent) => parent.try_get_type(type_expression_kind),
@@ -657,7 +757,7 @@ impl Scope {
             }
             TypeExpressionKind::GenericParameter { type_name, param } => {
                 let name = format!("{}_{}", type_name, param.text);
-                match self.records.get(&name) {
+                match self.types.get(&name) {
                     Some(type_kind) => Ok(type_kind.clone()),
                     None => match &self.parent {
                         Some(parent) => parent.try_get_type(type_expression_kind),
@@ -1602,9 +1702,9 @@ impl TypeChecker {
                 }
                 ExpressionKind::FunctionCall {
                     callee,
-                    open_paren: _,
+                    open_paren,
                     args,
-                    close_paren: _,
+                    close_paren,
                 } => {
                     let loc = callee.kind.get_loc().clone();
                     let mut args: Vec<Expression> = args.to_owned();
@@ -1626,7 +1726,17 @@ impl TypeChecker {
                     if name == "print" {
                         return Ok(CheckedExpression {
                             kind: CheckedExpressionKind::FunctionCall {
-                                name: "printf".to_owned(),
+                                name: "print".to_owned(),
+                                args: vec![self.type_check_expression(&args[0])?],
+                            },
+                            type_kind: TypeKind::Unit,
+                            loc,
+                        });
+                    }
+                    if name == "println" {
+                        return Ok(CheckedExpression {
+                            kind: CheckedExpressionKind::FunctionCall {
+                                name: "println".to_owned(),
                                 args: vec![self.type_check_expression(&args[0])?],
                             },
                             type_kind: TypeKind::Unit,
@@ -1641,6 +1751,15 @@ impl TypeChecker {
                         .clone();
 
                     let mut checked_args: Vec<CheckedExpression> = Vec::new();
+
+                    if args.len() != checked_function.args.len() {
+                        return Err(TypeCheckError::ArgLengthMismatch {
+                            expected: checked_function.args.len(),
+                            actual: args.len(),
+                            loc: span_locs(&open_paren.loc, &close_paren.loc),
+                        });
+                    }
+
                     for (i, arg) in args.iter().enumerate() {
                         self.scope
                             .assign_context
@@ -1773,6 +1892,9 @@ impl TypeChecker {
                                 Some(arg) => {
                                     self.scope.assign_context.push(member.type_kind.clone());
                                     let checked_arg = self.type_check_expression(arg)?;
+
+                                    //TODO: this needs to erase record_type's generics
+
                                     self.scope.assign_context.pop();
 
                                     self.expect_type(
@@ -1937,6 +2059,7 @@ impl TypeChecker {
             | TypeKind::U32
             | TypeKind::U64
             | TypeKind::I8
+            | TypeKind::Char
             | TypeKind::I16
             | TypeKind::I32
             | TypeKind::I64 => true,
@@ -1951,6 +2074,7 @@ impl TypeChecker {
             | TypeKind::U32
             | TypeKind::U64
             | TypeKind::I8
+            | TypeKind::Char
             | TypeKind::I16
             | TypeKind::I32
             | TypeKind::I64
