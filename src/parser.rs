@@ -347,13 +347,13 @@ pub enum ParseError {
 }
 #[derive(Debug, Clone)]
 pub struct Parser {
-    allow_record_literals: bool, //This might be a bit hacky but disambiguates nicely for now
+    allow_record_literals: Vec<bool>, //This might be a bit hacky but disambiguates nicely for now
 }
 
 impl Parser {
     pub fn new() -> Parser {
         return Parser {
-            allow_record_literals: false,
+            allow_record_literals: vec![false],
         };
     }
 
@@ -397,9 +397,9 @@ impl Parser {
 
                 let equals = Self::expect_token(tokens, TokenKind::Equals)?;
                 if let Some(_) = tokens.peek() {
-                    self.allow_record_literals = true;
+                    self.allow_record_literals.push(true);
                     let initialiser = self.parse_binary_expression(tokens, 0)?;
-                    self.allow_record_literals = false;
+                    self.allow_record_literals.pop();
                     let semicolon = Self::expect_token(tokens, TokenKind::Semicolon)?;
 
                     return Ok(Statement {
@@ -486,8 +486,9 @@ impl Parser {
             TokenKind::IfKeyword => {
                 let if_keyword = Self::expect_token(tokens, TokenKind::IfKeyword)?;
                 let loc = if_keyword.loc.clone();
-                self.allow_record_literals = false;
+                self.allow_record_literals.push(false);
                 let condition = self.parse_binary_expression(tokens, 0)?;
+                self.allow_record_literals.pop();
                 let body = self.parse_statement(tokens)?;
 
                 let else_body: Option<Statement> = match tokens.peek() {
@@ -517,8 +518,9 @@ impl Parser {
                 let loc = while_keyword.loc.clone();
                 let condition = self.parse_binary_expression(tokens, 0)?;
 
-                self.allow_record_literals = false;
+                self.allow_record_literals.push(false);
                 let body = self.parse_statement(tokens)?;
+                self.allow_record_literals.pop();
 
                 Ok(Statement {
                     kind: StatementKind::While {
@@ -533,7 +535,7 @@ impl Parser {
                 let return_keyword = Self::expect_token(tokens, TokenKind::ReturnKeyword)?;
                 let loc = return_keyword.loc.clone();
 
-                self.allow_record_literals = true;
+                self.allow_record_literals.push(true);
                 let return_value: Option<Expression> = match tokens.peek() {
                     Some(token) => match token.kind {
                         TokenKind::Semicolon => None,
@@ -541,7 +543,7 @@ impl Parser {
                     },
                     None => return Err(ParseError::UnexpectedEOF),
                 };
-                self.allow_record_literals = false;
+                self.allow_record_literals.pop();
 
                 Self::expect_token(tokens, TokenKind::Semicolon)?;
 
@@ -565,10 +567,10 @@ impl Parser {
                     while tokens.peek().is_some()
                         && tokens.peek().unwrap().kind != TokenKind::CloseAngle
                     {
-                        self.allow_record_literals = true;
+                        self.allow_record_literals.push(true);
                         let generic_type_parameter =
                             Self::expect_token(tokens, TokenKind::Identifier)?;
-                        self.allow_record_literals = false;
+                        self.allow_record_literals.pop();
                         generic_type_parameters.push(generic_type_parameter);
 
                         if tokens.peek().is_some()
@@ -818,7 +820,7 @@ impl Parser {
 
     fn get_unary_operator_precedence(kind: &TokenKind) -> usize {
         return match kind {
-            TokenKind::Plus | TokenKind::Minus | TokenKind::NotKeyword => 1,
+            TokenKind::Plus | TokenKind::Minus | TokenKind::NotKeyword => 10,
             _ => 0,
         };
     }
@@ -849,7 +851,7 @@ impl Parser {
             | TokenKind::CloseAngleEquals
             | TokenKind::OpenAngle
             | TokenKind::OpenAngleEquals => 8,
-            TokenKind::EqualsEquals => 7,
+            TokenKind::EqualsEquals | TokenKind::BangEquals => 7,
             TokenKind::AndKeyword => 6,
             TokenKind::XorKeyword => 5,
             TokenKind::OrKeyword => 4,
@@ -942,7 +944,6 @@ impl Parser {
                     },
                 }
             };
-            let loc = left.kind.get_loc().clone();
 
             while let Some(token) = tokens.peek() {
                 let precedence = Self::get_binary_operator_precedence(&token.kind);
@@ -956,7 +957,9 @@ impl Parser {
                         TokenKind::OpenParen => left = self.parse_function_call(left, tokens)?,
                         TokenKind::OpenSquare => left = self.parse_array_index(left, tokens)?,
                         TokenKind::OpenCurly => match left.kind {
-                            ExpressionKind::Variable { .. } if self.allow_record_literals => {
+                            ExpressionKind::Variable { .. }
+                                if *self.allow_record_literals.last().unwrap() =>
+                            {
                                 left = self.parse_record_literal(left, tokens)?
                             }
                             _ => return Ok(left),
@@ -1054,9 +1057,9 @@ impl Parser {
 
             let mut args: Vec<Expression> = Vec::new();
             while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
-                self.allow_record_literals = true;
+                self.allow_record_literals.push(true);
                 let arg = self.parse_binary_expression(tokens, 0)?;
-                self.allow_record_literals = false;
+                self.allow_record_literals.pop();
                 args.push(arg);
 
                 if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
@@ -1131,9 +1134,9 @@ impl Parser {
                 && tokens.peek().is_some()
                 && tokens.peek().unwrap().kind != TokenKind::CloseParen
             {
-                self.allow_record_literals = true;
+                self.allow_record_literals.push(true);
                 args.push(self.parse_binary_expression(tokens, 0)?);
-                self.allow_record_literals = false;
+                self.allow_record_literals.pop();
 
                 let token = tokens.next();
                 match token {
@@ -1268,7 +1271,7 @@ impl Parser {
                         identifier: current_token.clone(),
                     },
                 }),
-                _ => Err(ParseError::UnexpectedToken(tokens.next().unwrap().clone())),
+                _ => Err(ParseError::UnexpectedToken(current_token.clone())),
             };
         }
         Err(ParseError::UnexpectedEOF)

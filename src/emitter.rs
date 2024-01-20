@@ -351,9 +351,19 @@ impl CEmitter {
                 Ok(())
             }
             CheckedExpressionKind::FunctionCall { name, args } => {
-                write!(self.out_file, "{}(", name)?;
-
-                if name == "printf" {
+                if name == "print" {
+                    write!(self.out_file, "printf(")?;
+                    write!(
+                        self.out_file,
+                        "\"{}\", ",
+                        Self::get_print_format_for_type(&args[0].type_kind)
+                    )?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, ")")?;
+                    return Ok(());
+                }
+                if name == "println" {
+                    write!(self.out_file, "printf(")?;
                     write!(
                         self.out_file,
                         "\"{}\\n\", ",
@@ -363,7 +373,27 @@ impl CEmitter {
                     write!(self.out_file, ")")?;
                     return Ok(());
                 }
-
+                if name == "file_open" {
+                    write!(self.out_file, "fopen(")?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, ", ")?;
+                    self.emit_expression(&args[1])?;
+                    write!(self.out_file, ")")?;
+                    return Ok(());
+                }
+                if name == "read_char" {
+                    write!(self.out_file, "fgetc(")?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, ")")?;
+                    return Ok(());
+                }
+                if name == "close" {
+                    write!(self.out_file, "fclose(")?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, ")")?;
+                    return Ok(());
+                }
+                write!(self.out_file, "{}(", name)?;
                 for (i, arg) in args.iter().enumerate() {
                     self.emit_expression(arg)?;
                     if i < args.len() - 1 {
@@ -452,7 +482,7 @@ impl CEmitter {
             TypeKind::U16 => "unsigned short".to_string(),
             TypeKind::U32 => "unsigned long".to_string(),
             TypeKind::U64 => "unsigned long long".to_string(),
-            TypeKind::I8 => "char".to_string(),
+            TypeKind::I8 | TypeKind::Char => "char".to_string(),
             TypeKind::I16 => "short".to_string(),
             TypeKind::I32 => "long".to_string(),
             TypeKind::I64 => "long long".to_string(),
@@ -467,6 +497,7 @@ impl CEmitter {
             TypeKind::String => "char*".to_string(),
             TypeKind::Range(_, _) => todo!(),
             TypeKind::GenericParameter(name) => name.to_string(),
+            TypeKind::File => "FILE *".to_string(),
         };
     }
 
@@ -480,7 +511,7 @@ impl CEmitter {
             TypeKind::U16 => format!("unsigned short {}", param_name),
             TypeKind::U32 => format!("unsigned long {}", param_name),
             TypeKind::U64 => format!("unsigned long long {}", param_name),
-            TypeKind::I8 => format!("char {}", param_name),
+            TypeKind::I8 | TypeKind::Char => format!("char {}", param_name),
             TypeKind::I16 => format!("short {}", param_name),
             TypeKind::I32 => format!("long {}", param_name),
             TypeKind::I64 => format!("long long {}", param_name),
@@ -497,6 +528,7 @@ impl CEmitter {
             TypeKind::String => format!("char* {}", param_name),
             TypeKind::Range(_, _) => todo!(),
             TypeKind::GenericParameter(_) => todo!(),
+            TypeKind::File => "FILE *".to_string(),
         };
     }
 
@@ -513,6 +545,7 @@ impl CEmitter {
             TypeKind::U32 => "%lu".to_string(),
             TypeKind::U64 => "%llu".to_string(),
             TypeKind::I8 => "%hhi".to_string(),
+            TypeKind::Char => "%c".to_string(),
             TypeKind::I16 => "%hi".to_string(),
             TypeKind::I32 => "%li".to_string(),
             TypeKind::I64 => "%lli".to_string(),
@@ -521,6 +554,7 @@ impl CEmitter {
             TypeKind::String => "%s".to_string(),
             TypeKind::Range(_, _) => todo!(),
             TypeKind::GenericParameter(_) => todo!(),
+            TypeKind::File => "%zu".to_string(),
         };
     }
 }
