@@ -109,8 +109,16 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
                 },
             })
         }
-        CheckedStatementKind::Record { name, members } => Ok(CheckedStatement {
-            kind: CheckedStatementKind::Record { name, members },
+        CheckedStatementKind::Record {
+            name,
+            generic_params,
+            members,
+        } => Ok(CheckedStatement {
+            kind: CheckedStatementKind::Record {
+                name,
+                generic_params,
+                members,
+            },
         }),
         CheckedStatementKind::Break => Ok(CheckedStatement {
             kind: CheckedStatementKind::Break,

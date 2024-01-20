@@ -54,6 +54,7 @@ pub enum StatementKind {
         record_keyword: Token,
         identifier: Token,
         members: Vec<(Token, Expression)>,
+        generic_type_parameters: Vec<Token>,
     },
     Enum {
         enum_keyword: Token,
@@ -193,7 +194,7 @@ impl Location for ExpressionKind {
             ExpressionKind::Binary { left, op, right } => {
                 span_locs(&left.kind.get_loc(), &right.kind.get_loc())
             }
-            ExpressionKind::Unary { op, operand } => todo!(),
+            ExpressionKind::Unary { op, operand } => span_locs(&op.loc, &operand.kind.get_loc()),
             ExpressionKind::Parenthesised { expression } => todo!(),
             ExpressionKind::Variable { identifier } => identifier.loc.clone(),
             ExpressionKind::TypeAnnotation {
@@ -214,7 +215,7 @@ impl Location for ExpressionKind {
                 open_curly,
                 args,
                 close_curly,
-            } => todo!(),
+            } => span_locs(&record_identifier.loc, &close_curly.loc),
             ExpressionKind::Accessor {
                 accessee,
                 dot,
@@ -260,6 +261,17 @@ pub enum TypeExpressionKind {
         close_square: Token,
         element_type: Box<TypeExpressionKind>,
     },
+    //MyRecord<u32>, Foo<u32, MyRecord<u32>>, List<[6]u32> etc
+    Generic {
+        generic_type: Box<TypeExpressionKind>,
+        open_angle: Token,
+        generic_parameter_types: Vec<TypeExpressionKind>,
+        close_angle: Token,
+    },
+    GenericParameter {
+        type_name: String,
+        param: Token,
+    },
 }
 
 impl Location for TypeExpressionKind {
@@ -277,6 +289,13 @@ impl Location for TypeExpressionKind {
                 close_square,
                 element_type,
             } => todo!(),
+            TypeExpressionKind::Generic {
+                generic_type,
+                open_angle,
+                generic_parameter_types,
+                close_angle,
+            } => span_locs(&generic_type.get_loc(), &close_angle.loc),
+            TypeExpressionKind::GenericParameter { type_name, param } => param.loc.clone(),
         }
     }
 }
@@ -370,7 +389,7 @@ impl Parser {
 
                 let type_annotation: Option<Expression> = match tokens.peek() {
                     Some(token) if token.kind == TokenKind::Colon => {
-                        Some(Self::parse_type_annotation(tokens)?)
+                        Some(self.parse_type_annotation(tokens)?)
                     }
                     Some(_) => None,
                     None => return Err(ParseError::UnexpectedEOF),
@@ -422,7 +441,7 @@ impl Parser {
 
                     let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
                     let loc = identifier.loc.clone();
-                    let type_annotation = Self::parse_type_annotation(tokens)?;
+                    let type_annotation = self.parse_type_annotation(tokens)?;
 
                     args.push(Expression {
                         kind: ExpressionKind::FunctionParameter {
@@ -443,7 +462,7 @@ impl Parser {
 
                 let return_annotation: Option<Expression> = match tokens.peek() {
                     Some(token) if token.kind == TokenKind::Colon => {
-                        Some(Self::parse_type_annotation(tokens)?)
+                        Some(self.parse_type_annotation(tokens)?)
                     }
                     Some(_) => None,
                     None => return Err(ParseError::UnexpectedEOF),
@@ -539,6 +558,27 @@ impl Parser {
                 let loc = record_keyword.loc.clone();
 
                 let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
+
+                let mut generic_type_parameters: Vec<Token> = Vec::new();
+                if tokens.peek().is_some() && tokens.peek().unwrap().kind == TokenKind::OpenAngle {
+                    Self::expect_token(tokens, TokenKind::OpenAngle)?;
+                    while tokens.peek().is_some()
+                        && tokens.peek().unwrap().kind != TokenKind::CloseAngle
+                    {
+                        self.allow_record_literals = true;
+                        let generic_type_parameter =
+                            Self::expect_token(tokens, TokenKind::Identifier)?;
+                        self.allow_record_literals = false;
+                        generic_type_parameters.push(generic_type_parameter);
+
+                        if tokens.peek().is_some()
+                            && tokens.peek().unwrap().kind != TokenKind::CloseAngle
+                        {
+                            Self::expect_token(tokens, TokenKind::Comma)?;
+                        }
+                    }
+                    Self::expect_token(tokens, TokenKind::CloseAngle)?;
+                }
                 Self::expect_token(tokens, TokenKind::OpenCurly)?;
 
                 let mut members: Vec<(Token, Expression)> = Vec::new();
@@ -546,7 +586,7 @@ impl Parser {
                     && tokens.peek().unwrap().kind != TokenKind::CloseCurly
                 {
                     let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
-                    let type_annotation = Self::parse_type_annotation(tokens)?;
+                    let type_annotation = self.parse_type_annotation(tokens)?;
 
                     members.push((identifier, type_annotation));
 
@@ -563,6 +603,7 @@ impl Parser {
                     kind: StatementKind::Record {
                         record_keyword,
                         identifier,
+                        generic_type_parameters,
                         members,
                     },
                     loc,
@@ -675,10 +716,11 @@ impl Parser {
     }
 
     fn parse_type_annotation(
+        &mut self,
         tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
     ) -> Result<Expression, ParseError> {
         let colon = Self::expect_token(tokens, TokenKind::Colon)?;
-        let type_expression_kind = Self::parse_type_expression_kind(tokens)?;
+        let type_expression_kind = self.parse_type_expression_kind(tokens)?;
         Ok(Expression {
             kind: ExpressionKind::TypeAnnotation {
                 colon: colon.clone(),
@@ -688,13 +730,54 @@ impl Parser {
     }
 
     fn parse_type_expression_kind(
+        &mut self,
         tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
     ) -> Result<TypeExpressionKind, ParseError> {
         if let Some(token) = tokens.next() {
             match &token.kind {
-                TokenKind::Identifier => Ok(TypeExpressionKind::Basic {
-                    identifier: token.clone(),
-                }),
+                TokenKind::Identifier => {
+                    if let Some(next) = tokens.peek() {
+                        match next.kind {
+                            TokenKind::OpenAngle => {
+                                let open_angle = Self::expect_token(tokens, TokenKind::OpenAngle)?;
+                                let mut generic_type_parameters: Vec<TypeExpressionKind> =
+                                    Vec::new();
+                                while tokens.peek().is_some()
+                                    && tokens.peek().unwrap().kind != TokenKind::CloseAngle
+                                {
+                                    let generic_type_parameter =
+                                        self.parse_type_expression_kind(tokens)?;
+                                    generic_type_parameters.push(generic_type_parameter);
+
+                                    if tokens.peek().is_some()
+                                        && tokens.peek().unwrap().kind != TokenKind::CloseAngle
+                                    {
+                                        Self::expect_token(tokens, TokenKind::Comma)?;
+                                    }
+                                }
+                                let close_angle =
+                                    Self::expect_token(tokens, TokenKind::CloseAngle)?;
+
+                                return Ok(TypeExpressionKind::Generic {
+                                    generic_type: Box::new(TypeExpressionKind::Basic {
+                                        identifier: token.clone(),
+                                    }),
+                                    open_angle,
+                                    generic_parameter_types: generic_type_parameters,
+                                    close_angle,
+                                });
+                            }
+                            _ => {
+                                return Ok(TypeExpressionKind::Basic {
+                                    identifier: token.clone(),
+                                })
+                            }
+                        }
+                    }
+                    return Ok(TypeExpressionKind::Basic {
+                        identifier: token.clone(),
+                    });
+                }
                 TokenKind::OpenSquare => {
                     let open_square = token;
 
@@ -705,7 +788,7 @@ impl Parser {
                             let length_token = next;
                             let close_square = Self::expect_token(tokens, TokenKind::CloseSquare)?;
 
-                            let element_type_kind = Self::parse_type_expression_kind(tokens)?;
+                            let element_type_kind = self.parse_type_expression_kind(tokens)?;
 
                             return Ok(TypeExpressionKind::Array {
                                 open_square: open_square.clone(),
@@ -715,7 +798,7 @@ impl Parser {
                             });
                         }
                         TokenKind::CloseSquare => {
-                            let element_type_kind = Self::parse_type_expression_kind(tokens)?;
+                            let element_type_kind = self.parse_type_expression_kind(tokens)?;
 
                             return Ok(TypeExpressionKind::Slice {
                                 open_square: open_square.clone(),
@@ -1112,10 +1195,9 @@ impl Parser {
     ) -> Result<Expression, ParseError> {
         //This one needs me to not advance the iterator
         if let Some(token) = tokens.peek() {
-            let token_loc = token.loc.clone();
             match &token.kind {
                 TokenKind::OpenSquare => {
-                    let array_type_expression_kind = Self::parse_type_expression_kind(tokens)?;
+                    let array_type_expression_kind = self.parse_type_expression_kind(tokens)?;
 
                     let open_curly = Self::expect_token(tokens, TokenKind::OpenCurly)?;
 

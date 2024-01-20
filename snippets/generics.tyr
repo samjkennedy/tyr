@@ -1,0 +1,17 @@
+record Vec<T> {
+    x: T,
+    y: T
+}
+
+record Tuple<T, U> {
+    first:  T,
+    second: U
+}
+
+function main() {
+    var t: Tuple<Vec<f32>, f32> = Tuple {
+        Vec { 3.5, 4.5 },
+        3.3
+    };
+    print(t.first.x);
+}

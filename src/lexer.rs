@@ -67,7 +67,7 @@ pub enum TokenKind {
     FatArrow,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Loc {
     pub file: String,
     pub row: usize,
@@ -91,7 +91,7 @@ pub fn span_locs(start: &Loc, end: &Loc) -> Loc {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
     pub text: String,
