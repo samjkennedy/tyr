@@ -6,7 +6,8 @@ use std::{
 use crate::{
     parser::BinaryOpKind,
     type_checker::{
-        CheckedExpression, CheckedExpressionKind, CheckedStatement, CheckedStatementKind, TypeKind,
+        CheckedExpression, CheckedExpressionKind, CheckedStatement, CheckedStatementKind, Module,
+        TypeKind,
     },
 };
 
@@ -19,7 +20,7 @@ impl CEmitter {
         return CEmitter { out_file };
     }
 
-    pub fn emit_program(&mut self, statements: Vec<CheckedStatement>) -> io::Result<()> {
+    pub fn emit_module(&mut self, module: Module) -> io::Result<()> {
         //preamble
         self.out_file.write(b"#include <stdio.h>\n")?;
         self.out_file.write(b"#include <stdbool.h>\n")?;
@@ -68,7 +69,57 @@ impl CEmitter {
         //             size_t len;
         //     } Tyr_Slice;",
         // )?;
-        for statement in statements {
+
+        for type_kind in module.types {
+            match type_kind {
+                TypeKind::Record(name, generic_params, members) => {
+                    if !generic_params.is_empty() {
+                        writeln!(
+                            self.out_file,
+                            "typedef struct {}_{} {{",
+                            name,
+                            generic_params
+                                .iter()
+                                .map(|t| t.to_string())
+                                .collect::<Vec<String>>()
+                                .join(", ")
+                        )?;
+                        for member in members {
+                            writeln!(
+                                self.out_file,
+                                "{} {};",
+                                Self::get_c_type(&member.type_kind),
+                                member.name
+                            )?;
+                        }
+                        writeln!(
+                            self.out_file,
+                            "}} {}_{};",
+                            name,
+                            generic_params
+                                .iter()
+                                .map(|t| t.to_string())
+                                .collect::<Vec<String>>()
+                                .join(", ")
+                        )?;
+                    } else {
+                        writeln!(self.out_file, "typedef struct {} {{", name)?;
+                        for member in members {
+                            writeln!(
+                                self.out_file,
+                                "{} {};",
+                                Self::get_c_type(&member.type_kind),
+                                member.name
+                            )?;
+                        }
+                        writeln!(self.out_file, "}} {};", name)?;
+                    }
+                }
+                _ => todo!("emit module type kind: {}", type_kind),
+            }
+        }
+
+        for statement in module.statements {
             self.emit_statement(&statement)?;
         }
         Ok(())
@@ -180,17 +231,13 @@ impl CEmitter {
                 }
                 writeln!(self.out_file, ";")?;
             }
-            CheckedStatementKind::Record { name, members } => {
-                writeln!(self.out_file, "typedef struct {} {{", name)?;
-                for member in members {
-                    writeln!(
-                        self.out_file,
-                        "{} {};",
-                        Self::get_c_type(&member.type_kind),
-                        member.name
-                    )?;
-                }
-                writeln!(self.out_file, "}} {};", name)?;
+            CheckedStatementKind::Record {
+                name,
+                generic_params,
+                members,
+            } => {
+                //Don't emit records
+                return Ok(());
             }
             CheckedStatementKind::Break => writeln!(self.out_file, "break;")?,
             CheckedStatementKind::Continue => writeln!(self.out_file, "continue;")?,
@@ -354,7 +401,7 @@ impl CEmitter {
                 Ok(())
             }
             CheckedExpressionKind::RecordLiteral { arguments } => {
-                writeln!(
+                write!(
                     self.out_file,
                     "({}){{",
                     Self::get_c_type(&expression.type_kind)
@@ -385,7 +432,15 @@ impl CEmitter {
         return match type_kind {
             TypeKind::Unit => "void".to_string(),
             TypeKind::Bool => "bool".to_string(),
-            TypeKind::Record(name, _) => name.to_string(),
+            TypeKind::Record(name, generic_params, _) => format!(
+                "{}_{}",
+                name,
+                generic_params
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<String>>()
+                    .join("_")
+            ),
             TypeKind::Enum(name, _) => name.to_string(),
             TypeKind::U8 => "unsigned char".to_string(),
             TypeKind::U16 => "unsigned short".to_string(),
@@ -405,6 +460,7 @@ impl CEmitter {
             }
             TypeKind::String => "char*".to_string(),
             TypeKind::Range(_, _) => todo!(),
+            TypeKind::GenericParameter(name) => name.to_string(),
         };
     }
 
@@ -412,7 +468,7 @@ impl CEmitter {
         return match type_kind {
             TypeKind::Unit => format!("void {}", param_name),
             TypeKind::Bool => format!("bool {}", param_name),
-            TypeKind::Record(name, _) => format!("{} {}", name, param_name),
+            TypeKind::Record(name, _, _) => format!("{} {}", name, param_name),
             TypeKind::Enum(name, _) => format!("{} {}", name, param_name),
             TypeKind::U8 => format!("unsigned char {}", param_name),
             TypeKind::U16 => format!("unsigned short {}", param_name),
@@ -434,6 +490,7 @@ impl CEmitter {
             }
             TypeKind::String => format!("char* {}", param_name),
             TypeKind::Range(_, _) => todo!(),
+            TypeKind::GenericParameter(_) => todo!(),
         };
     }
 
@@ -443,7 +500,7 @@ impl CEmitter {
             TypeKind::Bool => "%d".to_string(),
             TypeKind::Array(_, _) => todo!(),
             TypeKind::Slice(_) => todo!(),
-            TypeKind::Record(_, _) => todo!(),
+            TypeKind::Record(_, _, _) => todo!(),
             TypeKind::Enum(_, _) => "%d".to_string(),
             TypeKind::U8 => "%hhu".to_string(),
             TypeKind::U16 => "%hu".to_string(),
@@ -457,6 +514,7 @@ impl CEmitter {
             TypeKind::F64 => "%.6lf".to_string(),
             TypeKind::String => "%s".to_string(),
             TypeKind::Range(_, _) => todo!(),
+            TypeKind::GenericParameter(_) => todo!(),
         };
     }
 }

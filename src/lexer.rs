@@ -67,7 +67,7 @@ pub enum TokenKind {
     FatArrow,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Loc {
     pub file: String,
     pub row: usize,

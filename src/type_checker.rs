@@ -1,5 +1,5 @@
-use core::{fmt, panic, time};
-use std::collections::HashMap;
+use core::{fmt, panic};
+use std::{collections::HashMap, ops::Index};
 
 use crate::{
     lexer::{span_locs, Loc, Token, TokenKind},
@@ -26,9 +26,10 @@ pub enum TypeKind {
     String,
     Array(usize, Box<TypeKind>),
     Slice(Box<TypeKind>),
-    Record(String, Vec<CheckedVariable>),
+    Record(String, Vec<TypeKind>, Vec<CheckedVariable>),
     Range(Box<TypeKind>, Box<TypeKind>),
     Enum(String, Vec<String>),
+    GenericParameter(String),
 }
 
 impl fmt::Display for TypeKind {
@@ -54,20 +55,27 @@ impl fmt::Display for TypeKind {
             TypeKind::Slice(inner_type) => {
                 write!(f, "[]{}", inner_type)
             }
-            TypeKind::Record(name, fields) => {
-                write!(f, "{} {{ ", name)?;
-                for (i, field) in fields.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}: {}", field.name, field.type_kind)?;
+            TypeKind::Record(name, generic_parameters, fields) => {
+                if generic_parameters.is_empty() {
+                    write!(f, "{}", name)
+                } else {
+                    write!(
+                        f,
+                        "{}<{}>",
+                        name,
+                        generic_parameters
+                            .iter()
+                            .map(|t| t.to_string())
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                    )
                 }
-                write!(f, " }}")
             }
             TypeKind::Range(lower, upper) => {
                 write!(f, "range<{}, {}>", lower, upper)
             }
             TypeKind::Enum(name, _) => write!(f, "{}", name),
+            TypeKind::GenericParameter(name) => write!(f, "{}", name),
         }
     }
 }
@@ -146,6 +154,11 @@ pub enum TypeCheckError {
         type_kind: TypeKind,
         loc: Loc,
     },
+    WrongNumberOfTypeArguments {
+        expected: usize,
+        actual: usize,
+        loc: Loc,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +194,7 @@ pub enum CheckedStatementKind {
     },
     Record {
         name: String,
+        generic_params: Vec<TypeKind>,
         members: Vec<CheckedVariable>,
     },
     Enum {
@@ -318,8 +332,9 @@ struct Scope {
     functions: HashMap<String, CheckedFunction>,
     lookup_overrides: HashMap<String, (String, CheckedVariable)>,
     records: HashMap<String, TypeKind>,
+    generic_erasures: HashMap<String, TypeKind>,
     return_context: TypeKind,
-    assign_context: TypeKind,
+    assign_context: Vec<TypeKind>,
 }
 
 impl Scope {
@@ -331,8 +346,9 @@ impl Scope {
             functions: HashMap::new(),
             lookup_overrides: HashMap::new(),
             records: HashMap::new(),
+            generic_erasures: HashMap::new(),
             return_context: TypeKind::Unit,
-            assign_context: TypeKind::Unit,
+            assign_context: Vec::new(),
         };
     }
 
@@ -346,6 +362,7 @@ impl Scope {
             functions: HashMap::new(),
             lookup_overrides: HashMap::new(),
             records: HashMap::new(),
+            generic_erasures: HashMap::new(),
         };
     }
 
@@ -363,6 +380,18 @@ impl Scope {
                         name: name.clone(),
                         loc: loc.clone(),
                     }),
+                };
+            }
+        };
+    }
+
+    fn try_get_generic_erasure(&self, name: &String) -> Option<TypeKind> {
+        return match self.generic_erasures.get(name) {
+            Some(concrete_type) => Some(concrete_type.clone()),
+            None => {
+                return match &self.parent {
+                    Some(parent) => parent.try_get_generic_erasure(name),
+                    None => None,
                 };
             }
         };
@@ -434,8 +463,8 @@ impl Scope {
         Ok(())
     }
 
-    fn try_declare_type(&mut self, record: TypeKind, loc: Loc) -> Result<(), TypeCheckError> {
-        match &record {
+    fn try_declare_type(&mut self, type_kind: TypeKind, loc: Loc) -> Result<(), TypeCheckError> {
+        match &type_kind {
             TypeKind::Record(name, ..) => {
                 if self.records.contains_key(name) {
                     return Err(TypeCheckError::TypeAlreadyDeclared {
@@ -443,7 +472,17 @@ impl Scope {
                         loc: loc.clone(),
                     });
                 }
-                self.records.insert(name.clone(), record);
+                self.records.insert(name.clone(), type_kind);
+                return Ok(());
+            }
+            TypeKind::GenericParameter(name) => {
+                if self.records.contains_key(name) {
+                    return Err(TypeCheckError::TypeAlreadyDeclared {
+                        type_name: name.clone(),
+                        loc: loc.clone(),
+                    });
+                }
+                self.records.insert(name.clone(), type_kind);
                 return Ok(());
             }
             TypeKind::Enum(name, variants) => {
@@ -459,15 +498,15 @@ impl Scope {
                         loc: loc.clone(),
                     });
                 }
-                self.records.insert(name.clone(), record.clone());
+                self.records.insert(name.clone(), type_kind.clone());
 
                 let mut module = Scope::new_global_scope();
-                module.records.insert(name.clone(), record.clone());
+                module.records.insert(name.clone(), type_kind.clone());
                 for variant in variants {
                     module.try_declare_variable(
                         CheckedVariable {
                             name: variant.to_string(),
-                            type_kind: record.clone(),
+                            type_kind: type_kind.clone(),
                             declaration_loc: loc.clone(),
                         },
                         loc.clone(),
@@ -477,7 +516,7 @@ impl Scope {
                 self.modules.insert(name.clone(), module);
                 return Ok(());
             }
-            _ => panic!("Cannot declare non-record types"),
+            _ => panic!("Cannot declare {} types", type_kind),
         }
     }
 
@@ -556,17 +595,92 @@ impl Scope {
                 let element_type_kind = self.try_get_type(&element_type)?;
                 Ok(TypeKind::Slice(Box::new(element_type_kind)))
             }
+            TypeExpressionKind::Generic {
+                generic_type,
+                open_angle,
+                generic_parameter_types,
+                close_angle,
+            } => {
+                if let TypeKind::Record(name, generic_params, members) =
+                    self.try_get_type(&generic_type)?
+                {
+                    let mut erased_generics = HashMap::new();
+                    if generic_parameter_types.len() != generic_params.len() {
+                        return Err(TypeCheckError::WrongNumberOfTypeArguments {
+                            expected: generic_params.len(),
+                            actual: generic_parameter_types.len(),
+                            loc: span_locs(&open_angle.loc, &close_angle.loc),
+                        });
+                    }
+                    for (i, param_type) in generic_parameter_types.iter().enumerate() {
+                        match generic_params.get(i) {
+                            Some(param) => match param {
+                                TypeKind::GenericParameter(generic_param_name) => {
+                                    let erased_type = self.try_get_type(param_type)?;
+
+                                    erased_generics.insert(generic_param_name, erased_type);
+                                }
+                                _ => todo!(), //will this ever happen?
+                            },
+                            None => unreachable!(),
+                        }
+                    }
+
+                    let mut erased_members: Vec<CheckedVariable> = Vec::new();
+                    for member in members {
+                        if let TypeKind::GenericParameter(name) = member.type_kind {
+                            let erased_member = CheckedVariable {
+                                name: member.name,
+                                type_kind: erased_generics
+                                    .get(&name)
+                                    .expect("should not fail")
+                                    .clone(),
+                                declaration_loc: member.declaration_loc,
+                            };
+                            erased_members.push(erased_member)
+                        } else {
+                            erased_members.push(member);
+                        }
+                    }
+
+                    return Ok(TypeKind::Record(
+                        name,
+                        erased_generics.values().cloned().collect(),
+                        erased_members,
+                    ));
+                } else {
+                    todo!("other generic types, e.g. enums")
+                }
+            }
         }
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Module {
+    pub types: Vec<TypeKind>,
+    pub statements: Vec<CheckedStatement>,
+    //TODO: eventually move all global declarations here, variables, functions, all types, etc
+}
+
+impl Module {
+    fn new() -> Module {
+        return Module {
+            types: Vec::new(),
+            statements: Vec::new(),
+        };
+    }
+}
+
 pub struct TypeChecker {
+    module: Module,
     scope: Scope,
 }
 
 impl TypeChecker {
     pub fn new() -> TypeChecker {
         return TypeChecker {
+            module: Module::new(),
             scope: Scope::new_global_scope(),
         };
     }
@@ -574,16 +688,14 @@ impl TypeChecker {
     pub fn type_check_statements(
         &mut self,
         statements: Vec<Statement>,
-    ) -> Result<Vec<CheckedStatement>, TypeCheckError> {
-        let mut checked_statements: Vec<CheckedStatement> = Vec::new();
-
+    ) -> Result<Module, TypeCheckError> {
         for statement in statements {
             let checked_statement = self.type_check_statement(&statement)?;
 
-            checked_statements.push(checked_statement);
+            self.module.statements.push(checked_statement);
         }
 
-        Ok(checked_statements)
+        Ok(self.module.clone())
     }
 
     fn type_check_statement(
@@ -625,17 +737,20 @@ impl TypeChecker {
                     {
                         let type_kind = self.scope.try_get_type(&type_expression_kind)?;
 
-                        self.scope.assign_context = type_kind.clone();
+                        self.scope.assign_context.push(type_kind.clone());
 
-                        let checked_initialiser = self.type_check_expression(initialiser)?;
+                        let mut checked_initialiser = self.type_check_expression(initialiser)?;
 
-                        if type_kind != checked_initialiser.type_kind {
-                            return Err(TypeCheckError::TypeMismatch {
-                                expected: type_kind,
-                                actual: checked_initialiser.type_kind,
-                                loc: initialiser.kind.get_loc().clone(),
-                            });
-                        }
+                        self.scope.assign_context.pop();
+
+                        self.expect_type(
+                            type_kind.clone(),
+                            checked_initialiser.type_kind.clone(),
+                            initialiser.kind.get_loc().clone(),
+                        )?;
+
+                        checked_initialiser.type_kind = type_kind;
+
                         checked_initialiser
                     } else {
                         unreachable!()
@@ -689,7 +804,7 @@ impl TypeChecker {
             } => {
                 let checked_condition = self.type_check_expression(condition)?;
 
-                Self::expect_type(
+                self.expect_type(
                     TypeKind::Bool,
                     checked_condition.type_kind.clone(),
                     condition.kind.get_loc().clone(),
@@ -716,7 +831,7 @@ impl TypeChecker {
             } => {
                 let checked_condition = self.type_check_expression(condition)?;
 
-                Self::expect_type(
+                self.expect_type(
                     TypeKind::Bool,
                     checked_condition.type_kind.clone(),
                     condition.kind.get_loc().clone(),
@@ -738,7 +853,7 @@ impl TypeChecker {
                 if let Some(return_value) = return_value {
                     let checked_return_value = self.type_check_expression(return_value)?;
 
-                    Self::expect_type(
+                    self.expect_type(
                         self.scope.return_context.clone(),
                         checked_return_value.type_kind.clone(),
                         return_value.kind.get_loc().clone(),
@@ -756,9 +871,19 @@ impl TypeChecker {
             StatementKind::Record {
                 record_keyword,
                 identifier,
+                generic_type_parameters,
                 members,
             } => {
                 let mut checked_members: Vec<CheckedVariable> = Vec::new();
+
+                let mut generic_params = Vec::new();
+                for gtp in generic_type_parameters {
+                    self.scope.try_declare_type(
+                        TypeKind::GenericParameter(gtp.text.clone()),
+                        gtp.loc.clone(),
+                    )?;
+                    generic_params.push(TypeKind::GenericParameter(gtp.text.clone()));
+                }
 
                 for (member_identifier, type_annotation) in members {
                     if let ExpressionKind::TypeAnnotation {
@@ -778,14 +903,23 @@ impl TypeChecker {
                     }
                 }
 
-                let record = TypeKind::Record(identifier.text.clone(), checked_members.clone());
+                let record = TypeKind::Record(
+                    identifier.text.clone(),
+                    generic_params.clone(),
+                    checked_members.clone(),
+                );
 
                 self.scope
-                    .try_declare_type(record, record_keyword.loc.clone())?;
+                    .try_declare_type(record.clone(), record_keyword.loc.clone())?;
+
+                if generic_params.is_empty() {
+                    self.module.types.push(record);
+                }
 
                 Ok(CheckedStatement {
                     kind: CheckedStatementKind::Record {
                         name: identifier.text.clone(),
+                        generic_params,
                         members: checked_members,
                     },
                 })
@@ -865,7 +999,7 @@ impl TypeChecker {
                 } = &case.kind
                 {
                     let checked_pattern = self.type_check_expression(&pattern)?;
-                    Self::expect_type(
+                    self.expect_type(
                         expression_type_kind.clone(),
                         checked_pattern.type_kind.clone(),
                         pattern.kind.get_loc(),
@@ -1009,7 +1143,7 @@ impl TypeChecker {
                     for modifier in modifiers {
                         match modifier.kind {
                             TokenKind::WithKeyword => {
-                                if let TypeKind::Record(_, members) = &type_kind {
+                                if let TypeKind::Record(_, _, members) = &type_kind {
                                     for member in members {
                                         //TODO: This should use a function try_declare_lookup_override() or something, so that there can be an ordering
                                         self.scope.lookup_overrides.insert(
@@ -1041,115 +1175,214 @@ impl TypeChecker {
         Ok(checked_args)
     }
 
-    fn expect_type(expected: TypeKind, actual: TypeKind, loc: Loc) -> Result<(), TypeCheckError> {
-        if !Self::type_is_coerceable(&actual, &expected) {
-            return Err(TypeCheckError::TypeMismatch {
-                expected,
-                actual,
-                loc,
-            });
+    fn expect_type(
+        &mut self,
+        expected: TypeKind,
+        actual: TypeKind,
+        loc: Loc,
+    ) -> Result<(), TypeCheckError> {
+        if expected == actual {
+            return Ok(());
         }
-        Ok(())
-    }
-
-    fn type_is_coerceable(from: &TypeKind, to: &TypeKind) -> bool {
-        if from == to {
-            return true;
-        }
-        if let TypeKind::Array(_, from_el_type) = from {
-            if let TypeKind::Slice(to_el_type) = to {
-                return Self::type_is_coerceable(from_el_type, to_el_type);
+        if let TypeKind::GenericParameter(name) = &expected {
+            match self.scope.try_get_generic_erasure(name) {
+                Some(concrete_type) => {
+                    return self.expect_type(concrete_type.clone(), actual, loc);
+                }
+                None => {
+                    return Err(TypeCheckError::TypeMismatch {
+                        expected,
+                        actual,
+                        loc,
+                    })
+                }
             }
         }
-        return false;
+        if let TypeKind::Array(_, from_el_type) = &expected {
+            if let TypeKind::Slice(to_el_type) = actual {
+                return self.expect_type(*from_el_type.clone(), *to_el_type, loc);
+            }
+        }
+        if let TypeKind::Record(expected_name, expected_generic_params, _) = &expected {
+            if let TypeKind::Record(actual_name, actual_generic_params, _) = &actual {
+                //TODO: There has to be a better condition
+                if expected_generic_params.len() > 0
+                    && expected_generic_params.len() == actual_generic_params.len()
+                {
+                    if !self.module.types.contains(&expected) {
+                        self.module.types.push(expected);
+                    }
+                }
+                return Ok(());
+            }
+        }
+        return Err(TypeCheckError::TypeMismatch {
+            expected: expected.clone(),
+            actual,
+            loc,
+        });
     }
 
     fn type_check_expression(
         &mut self,
         expression: &Expression,
     ) -> Result<CheckedExpression, TypeCheckError> {
+        //TODO: the generic matching needs to be applied to ALL expressions, not just literals!!!!
         match &expression.kind {
-            ExpressionKind::BoolLiteral { token } => Ok(CheckedExpression {
-                kind: CheckedExpressionKind::BoolLiteral {
-                    value: match token.text.as_str() {
-                        "true" => true,
-                        "false" => false,
-                        _ => unreachable!(),
-                    },
-                },
-                type_kind: TypeKind::Bool,
-                loc: expression.kind.get_loc().clone(),
-            }),
+            ExpressionKind::BoolLiteral { token } => {
+                let (type_kind, checked_expression_kind) =
+                    match self.scope.assign_context.last().unwrap() {
+                        TypeKind::Bool => (
+                            TypeKind::Bool,
+                            CheckedExpressionKind::BoolLiteral {
+                                value: match token.text.as_str() {
+                                    "true" => true,
+                                    "false" => false,
+                                    _ => unreachable!(),
+                                },
+                            },
+                        ),
+                        TypeKind::GenericParameter(name) => {
+                            match self.scope.try_get_generic_erasure(name) {
+                                Some(concrete_type) => {
+                                    self.expect_type(
+                                        concrete_type.clone(),
+                                        TypeKind::Bool,
+                                        token.loc.clone(),
+                                    )?;
+                                    (
+                                        concrete_type,
+                                        CheckedExpressionKind::BoolLiteral {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
+                                }
+                                None => {
+                                    self.scope
+                                        .generic_erasures
+                                        .insert(name.clone(), TypeKind::Bool);
+                                    (
+                                        TypeKind::Bool,
+                                        CheckedExpressionKind::BoolLiteral {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(TypeCheckError::TypeMismatch {
+                                expected: self.scope.assign_context.last().unwrap().clone(),
+                                actual: TypeKind::Bool,
+                                loc: expression.kind.get_loc().clone(),
+                            })
+                        }
+                    };
+                Ok(CheckedExpression {
+                    kind: checked_expression_kind,
+                    type_kind,
+                    loc: expression.kind.get_loc().clone(),
+                })
+            }
             ExpressionKind::IntLiteral { token } => {
-                let (type_kind, checked_expression_kind) = match self.scope.assign_context {
-                    TypeKind::Unit | TypeKind::U32 => (
-                        TypeKind::U32,
-                        CheckedExpressionKind::U32Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    TypeKind::U8 => (
-                        TypeKind::U8,
-                        CheckedExpressionKind::U8Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    TypeKind::U16 => (
-                        TypeKind::U16,
-                        CheckedExpressionKind::U16Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    TypeKind::U64 => (
-                        TypeKind::U64,
-                        CheckedExpressionKind::U64Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    TypeKind::I8 => (
-                        TypeKind::I8,
-                        CheckedExpressionKind::I8Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    TypeKind::I16 => (
-                        TypeKind::I16,
-                        CheckedExpressionKind::I16Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    TypeKind::I32 => (
-                        TypeKind::I32,
-                        CheckedExpressionKind::I32Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    TypeKind::I64 => (
-                        TypeKind::I64,
-                        CheckedExpressionKind::I64Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    TypeKind::F32 => (
-                        TypeKind::F32,
-                        CheckedExpressionKind::F32Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    TypeKind::F64 => (
-                        TypeKind::F64,
-                        CheckedExpressionKind::F64Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    _ => {
-                        return Err(TypeCheckError::TypeMismatch {
-                            expected: self.scope.assign_context.clone(),
-                            actual: TypeKind::U32,
-                            loc: expression.kind.get_loc().clone(),
-                        })
-                    }
-                };
+                let (type_kind, checked_expression_kind) =
+                    match self.scope.assign_context.last().unwrap() {
+                        TypeKind::Unit | TypeKind::U32 => (
+                            TypeKind::U32,
+                            CheckedExpressionKind::U32Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::U8 => (
+                            TypeKind::U8,
+                            CheckedExpressionKind::U8Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::U16 => (
+                            TypeKind::U16,
+                            CheckedExpressionKind::U16Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::U64 => (
+                            TypeKind::U64,
+                            CheckedExpressionKind::U64Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::I8 => (
+                            TypeKind::I8,
+                            CheckedExpressionKind::I8Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::I16 => (
+                            TypeKind::I16,
+                            CheckedExpressionKind::I16Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::I32 => (
+                            TypeKind::I32,
+                            CheckedExpressionKind::I32Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::I64 => (
+                            TypeKind::I64,
+                            CheckedExpressionKind::I64Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::F32 => (
+                            TypeKind::F32,
+                            CheckedExpressionKind::F32Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::F64 => (
+                            TypeKind::F64,
+                            CheckedExpressionKind::F64Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::GenericParameter(name) => {
+                            match self.scope.try_get_generic_erasure(name) {
+                                Some(concrete_type) => {
+                                    self.expect_type(
+                                        concrete_type.clone(),
+                                        TypeKind::F32,
+                                        token.loc.clone(),
+                                    )?;
+                                    (
+                                        concrete_type,
+                                        CheckedExpressionKind::F32Literal {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
+                                }
+                                None => {
+                                    self.scope
+                                        .generic_erasures
+                                        .insert(name.clone(), TypeKind::F32);
+                                    (
+                                        TypeKind::F32,
+                                        CheckedExpressionKind::F32Literal {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(TypeCheckError::TypeMismatch {
+                                expected: self.scope.assign_context.last().unwrap().clone(),
+                                actual: TypeKind::U32,
+                                loc: expression.kind.get_loc().clone(),
+                            })
+                        }
+                    };
                 Ok(CheckedExpression {
                     kind: checked_expression_kind,
                     type_kind,
@@ -1157,21 +1390,50 @@ impl TypeChecker {
                 })
             }
             ExpressionKind::RealLiteral { token } => {
-                let (type_kind, checked_expression_kind) = match self.scope.assign_context {
-                    TypeKind::Unit | TypeKind::F32 | TypeKind::I32 => (
-                        TypeKind::F32,
-                        CheckedExpressionKind::F32Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    TypeKind::F64 | TypeKind::I64 => (
-                        TypeKind::F64,
-                        CheckedExpressionKind::F64Literal {
-                            value: token.text.parse().expect("should not fail"),
-                        },
-                    ),
-                    _ => unreachable!("{:?}", self.scope.assign_context),
-                };
+                let (type_kind, checked_expression_kind) =
+                    match self.scope.assign_context.last().unwrap() {
+                        TypeKind::Unit | TypeKind::F32 | TypeKind::I32 => (
+                            TypeKind::F32,
+                            CheckedExpressionKind::F32Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::F64 | TypeKind::I64 => (
+                            TypeKind::F64,
+                            CheckedExpressionKind::F64Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::GenericParameter(name) => {
+                            match self.scope.try_get_generic_erasure(name) {
+                                Some(concrete_type) => {
+                                    self.expect_type(
+                                        concrete_type.clone(),
+                                        TypeKind::F32,
+                                        token.loc.clone(),
+                                    )?;
+                                    (
+                                        concrete_type,
+                                        CheckedExpressionKind::F32Literal {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
+                                }
+                                None => {
+                                    self.scope
+                                        .generic_erasures
+                                        .insert(name.clone(), TypeKind::F32);
+                                    (
+                                        TypeKind::F32,
+                                        CheckedExpressionKind::F32Literal {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        _ => unreachable!("{:?}", self.scope.assign_context),
+                    };
                 Ok(CheckedExpression {
                     kind: checked_expression_kind,
                     type_kind,
@@ -1336,7 +1598,7 @@ impl TypeChecker {
                 for (i, arg) in args.iter().enumerate() {
                     let checked_arg = self.type_check_expression(arg)?;
 
-                    Self::expect_type(
+                    self.expect_type(
                         checked_function.args.get(i).unwrap().clone(),
                         checked_arg.type_kind.clone(),
                         arg.kind.get_loc().clone(),
@@ -1369,12 +1631,12 @@ impl TypeChecker {
                     TypeKind::Array(size, element_type) => {
                         let mut checked_elements: Vec<CheckedExpression> = Vec::new();
 
-                        self.scope.assign_context = *element_type.clone();
+                        self.scope.assign_context.push(*element_type.clone());
 
                         for element in elements {
                             let checked_element = self.type_check_expression(element)?;
 
-                            Self::expect_type(
+                            self.expect_type(
                                 *element_type.clone(),
                                 checked_element.type_kind.clone(),
                                 element.kind.get_loc().clone(),
@@ -1382,7 +1644,8 @@ impl TypeChecker {
 
                             checked_elements.push(checked_element);
                         }
-                        self.scope.assign_context = TypeKind::Unit;
+                        self.scope.assign_context.pop();
+
                         if size != &elements.len() {
                             return Err(TypeCheckError::TypeMismatch {
                                 expected: array_type.clone(),
@@ -1444,15 +1707,23 @@ impl TypeChecker {
                 let record_type = self.scope.try_get_type(&TypeExpressionKind::Basic {
                     identifier: record_identifier.clone(),
                 })?;
-                if let TypeKind::Record(name, members) = &record_type {
+
+                if let TypeKind::Record(name, generic_params, members) = &record_type {
+                    let outer_scope = self.scope.clone();
+                    self.scope = Scope::new_inner_scope(outer_scope.clone());
+
                     let n_members = members.len();
 
+                    //generic_params = T, U, V etc
                     let mut checked_args: Vec<CheckedExpression> = Vec::new();
                     for (i, member) in members.into_iter().enumerate() {
                         match args.get(i) {
                             Some(arg) => {
+                                self.scope.assign_context.push(member.type_kind.clone());
                                 let checked_arg = self.type_check_expression(arg)?;
-                                Self::expect_type(
+                                self.scope.assign_context.pop();
+
+                                self.expect_type(
                                     member.type_kind.clone(),
                                     checked_arg.type_kind.clone(),
                                     arg.kind.get_loc().clone(),
@@ -1469,6 +1740,9 @@ impl TypeChecker {
                             }
                         }
                     }
+
+                    self.scope = outer_scope;
+
                     if args.len() > n_members {
                         let checked_arg = self.type_check_expression(&args[n_members])?;
                         return Err(TypeCheckError::UnexpectedArgForRecord {
@@ -1498,7 +1772,9 @@ impl TypeChecker {
                 member_identifier,
             } => {
                 let checked_accessee = self.type_check_expression(&accessee)?;
-                if let TypeKind::Record(name, members) = &checked_accessee.type_kind.clone() {
+                if let TypeKind::Record(name, generic_params, members) =
+                    &checked_accessee.type_kind.clone()
+                {
                     let member_name = &member_identifier.text;
 
                     if let Some(member) = members.iter().find(|m| &m.name == member_name) {
@@ -1541,7 +1817,7 @@ impl TypeChecker {
 
                 let checked_upper = self.type_check_expression(&upper)?;
 
-                Self::expect_type(
+                self.expect_type(
                     checked_lower.type_kind,
                     checked_upper.type_kind,
                     upper.kind.get_loc().clone(),
@@ -1581,16 +1857,6 @@ impl TypeChecker {
 
     fn is_integer_type(kind: &TypeKind) -> bool {
         match kind {
-            TypeKind::Record(_, _)
-            | TypeKind::Array(_, _)
-            | TypeKind::Slice(_)
-            | TypeKind::Unit
-            | TypeKind::Bool
-            | TypeKind::F32
-            | TypeKind::F64
-            | TypeKind::String
-            | TypeKind::Range(_, _)
-            | TypeKind::Enum(_, _) => false,
             TypeKind::U8
             | TypeKind::U16
             | TypeKind::U32
@@ -1599,19 +1865,12 @@ impl TypeChecker {
             | TypeKind::I16
             | TypeKind::I32
             | TypeKind::I64 => true,
+            _ => false,
         }
     }
 
     fn is_number_type(kind: &TypeKind) -> bool {
         match kind {
-            TypeKind::Record(_, _)
-            | TypeKind::Array(_, _)
-            | TypeKind::Slice(_)
-            | TypeKind::Unit
-            | TypeKind::Bool
-            | TypeKind::String
-            | TypeKind::Range(_, _)
-            | TypeKind::Enum(_, _) => false,
             TypeKind::U8
             | TypeKind::U16
             | TypeKind::U32
@@ -1622,6 +1881,7 @@ impl TypeChecker {
             | TypeKind::I64
             | TypeKind::F32
             | TypeKind::F64 => true,
+            _ => false,
         }
     }
 

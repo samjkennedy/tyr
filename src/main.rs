@@ -93,15 +93,15 @@ fn main() {
 
     let mut type_checker = TypeChecker::new();
 
-    let checked_statements = match type_checker.type_check_statements(statements) {
-        Ok(checked_statements) => checked_statements,
+    let mut module = match type_checker.type_check_statements(statements) {
+        Ok(module) => module,
         Err(e) => {
             eprintln!("{}", format_typecheck_error(&e));
             return;
         }
     };
 
-    let rewritten_statements = match rewriter::rewrite_statements(checked_statements) {
+    module.statements = match rewriter::rewrite_statements(module.statements) {
         Ok(rewritten_statements) => rewritten_statements,
         Err(_) => todo!(),
     };
@@ -119,9 +119,7 @@ fn main() {
 
     let mut c_emitter = CEmitter::new(File::create(&c_file_name).expect("Couldn't open C file"));
 
-    c_emitter
-        .emit_program(rewritten_statements)
-        .expect("Emit failed");
+    c_emitter.emit_module(module).expect("Emit failed");
 
     // Compile the C code
     Command::new("gcc")
