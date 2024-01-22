@@ -58,7 +58,32 @@ impl CEmitter {
                     SAFE_EXIT(\"Exiting due to array index out of bounds\"); \
                 }                                                          \
                 (arr)[index] = value;                                      \
-            } while (0)\n",
+            } while (0)
+            
+        #define PRINT_IF_NOT_NULL(ptr, format, ...) \
+            do { \
+                if ((ptr) == NULL) { \
+                    printf(\"%s\", \"nil\"); \
+                } else { \
+                    printf(format, __VA_ARGS__); \
+                } \
+            } while(0)
+        
+        #define PRINTLN_IF_NOT_NULL(ptr, format, ...) \
+            do { \
+                if ((ptr) == NULL) { \
+                    printf(\"%s\\n\", \"nil\"); \
+                } else { \
+                    printf(format, __VA_ARGS__); \
+                } \
+            } while(0)
+        #define ACCESS_FIELD_OR_NULL(ptr, field) \
+            ((ptr) == NULL ? NULL : &((ptr)->field))
+            
+            #define SAFE_DEREF(x) \
+            ((x) ? *(x) : (exit(1), *(x)))
+    
+    ",
         )?;
         //TODO: When slices are a thing, use this struct?
         // self.out_file.write(
@@ -142,25 +167,50 @@ impl CEmitter {
                 name,
                 type_kind,
                 initialiser,
-            } => {
-                match type_kind {
-                    TypeKind::Array(size, el_type) => {
+            } => match type_kind {
+                TypeKind::Array(size, el_type) => {
+                    write!(
+                        self.out_file,
+                        "{} {}[{}] = ",
+                        Self::get_c_type(el_type),
+                        name,
+                        size
+                    )?;
+
+                    self.emit_expression(initialiser)?;
+                    writeln!(self.out_file, ";")?;
+                }
+                TypeKind::Optional(base_type) => match **base_type {
+                    TypeKind::File => {
                         write!(
                             self.out_file,
-                            "{} {}[{}] = ",
-                            Self::get_c_type(el_type),
+                            "{} optional_{} = ",
+                            Self::get_c_type(base_type),
+                            name
+                        )?;
+                        self.emit_expression(initialiser)?;
+                        writeln!(self.out_file, ";",)?;
+                        write!(
+                            self.out_file,
+                            "{} *{} = &optional_{};",
+                            Self::get_c_type(base_type),
                             name,
-                            size
+                            name
                         )?;
                     }
                     _ => {
                         write!(self.out_file, "{} {} = ", Self::get_c_type(type_kind), name)?;
+                        self.emit_expression(initialiser)?;
+                        writeln!(self.out_file, ";")?;
                     }
-                }
+                },
+                _ => {
+                    write!(self.out_file, "{} {} = ", Self::get_c_type(type_kind), name)?;
 
-                self.emit_expression(initialiser)?;
-                writeln!(self.out_file, ";")?;
-            }
+                    self.emit_expression(initialiser)?;
+                    writeln!(self.out_file, ";")?;
+                }
+            },
             CheckedStatementKind::FunctionDeclaration {
                 name,
                 args,
@@ -352,24 +402,26 @@ impl CEmitter {
             }
             CheckedExpressionKind::FunctionCall { name, args } => {
                 if name == "print" {
+                    let arg = &args[0];
                     write!(self.out_file, "printf(")?;
                     write!(
                         self.out_file,
                         "\"{}\", ",
-                        Self::get_print_format_for_type(&args[0].type_kind)
+                        Self::get_print_format_for_type(&arg.type_kind)
                     )?;
-                    self.emit_expression(&args[0])?;
+                    self.emit_expression(arg)?;
                     write!(self.out_file, ")")?;
                     return Ok(());
                 }
                 if name == "println" {
+                    let arg = &args[0];
                     write!(self.out_file, "printf(")?;
                     write!(
                         self.out_file,
                         "\"{}\\n\", ",
-                        Self::get_print_format_for_type(&args[0].type_kind)
+                        Self::get_print_format_for_type(&arg.type_kind)
                     )?;
-                    self.emit_expression(&args[0])?;
+                    self.emit_expression(arg)?;
                     write!(self.out_file, ")")?;
                     return Ok(());
                 }
@@ -431,11 +483,19 @@ impl CEmitter {
                 Ok(())
             }
             CheckedExpressionKind::RecordLiteral { arguments } => {
-                write!(
-                    self.out_file,
-                    "({}){{",
-                    Self::get_c_type(&expression.type_kind)
-                )?;
+                match &expression.type_kind {
+                    TypeKind::Optional(base_type) => {
+                        write!(self.out_file, "&({}){{", Self::get_c_type(&base_type))?;
+                    }
+                    _ => {
+                        write!(
+                            self.out_file,
+                            "({}){{",
+                            Self::get_c_type(&expression.type_kind)
+                        )?;
+                    }
+                }
+
                 for (i, arg) in arguments.iter().enumerate() {
                     self.emit_expression(arg)?;
 
@@ -451,10 +511,37 @@ impl CEmitter {
                 write!(self.out_file, ".{}", member)?;
                 Ok(())
             }
+            CheckedExpressionKind::SafeAccessor { accessee, member } => {
+                write!(self.out_file, "ACCESS_FIELD_OR_NULL(")?;
+                self.emit_expression(&accessee)?;
+                write!(self.out_file, ", {})", member)?;
+                Ok(())
+            }
             CheckedExpressionKind::StaticAccessor { name, member } => {
                 write!(self.out_file, "{}_{}", name, member.name) //TODO member should be an expression we handle differently
             }
             CheckedExpressionKind::MatchCase { pattern, result } => todo!(),
+            CheckedExpressionKind::Nil => write!(self.out_file, " NULL "),
+            CheckedExpressionKind::ForceUnwrap { expression } => {
+                if let TypeKind::Optional(_) = expression.type_kind {
+                    self.emit_expression(&expression)?;
+                    return Ok(());
+                }
+                //TODO: use a safe macro
+                write!(self.out_file, "SAFE_DEREF(")?;
+                self.emit_expression(&expression)?;
+                write!(self.out_file, ")")?;
+                Ok(())
+            }
+            CheckedExpressionKind::NilCoalesce { optional, default } => {
+                //TODO: this evaluates the optional expression twice, store it as a temporary variable first
+                self.emit_expression(&optional)?;
+                write!(self.out_file, " == NULL ? ")?;
+                self.emit_expression(&default)?;
+                write!(self.out_file, " : ")?;
+                self.emit_expression(&optional)?;
+                Ok(())
+            }
         }
     }
 
@@ -498,6 +585,7 @@ impl CEmitter {
             TypeKind::Range(_, _) => todo!(),
             TypeKind::GenericParameter(name) => name.to_string(),
             TypeKind::File => "FILE *".to_string(),
+            TypeKind::Optional(base_type) => format!("{} *", Self::get_c_type(base_type)),
         };
     }
 
@@ -529,6 +617,9 @@ impl CEmitter {
             TypeKind::Range(_, _) => todo!(),
             TypeKind::GenericParameter(_) => todo!(),
             TypeKind::File => "FILE *".to_string(),
+            TypeKind::Optional(base_type) => {
+                format!("{} {}", Self::get_c_type(base_type), param_name)
+            }
         };
     }
 
@@ -555,6 +646,7 @@ impl CEmitter {
             TypeKind::Range(_, _) => todo!(),
             TypeKind::GenericParameter(_) => todo!(),
             TypeKind::File => "%zu".to_string(),
+            TypeKind::Optional(base_type) => Self::get_print_format_for_type(&base_type),
         };
     }
 }

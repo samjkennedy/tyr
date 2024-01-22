@@ -149,6 +149,16 @@ pub enum ExpressionKind {
         dot: Token,
         member_identifier: Token,
     },
+    SafeAccessor {
+        accessee: Box<Expression>,
+        question_dot: Token,
+        member_identifier: Token,
+    },
+    NilCoalesce {
+        optional: Box<Expression>,
+        question_colon: Token,
+        default: Box<Expression>,
+    },
     StaticAccessor {
         namespace: Token,
         colon_colon: Token,
@@ -163,6 +173,13 @@ pub enum ExpressionKind {
         pattern: Box<Expression>,
         fat_arrow: Token,
         result: Box<Expression>,
+    },
+    Nil {
+        nil_keyword: Token,
+    },
+    ForceUnwrap {
+        expression: Box<Expression>,
+        bang: Token,
     },
 }
 
@@ -223,6 +240,11 @@ impl Location for ExpressionKind {
             } => {
                 return span_locs(&accessee.kind.get_loc(), &member_identifier.loc);
             }
+            ExpressionKind::SafeAccessor {
+                accessee,
+                question_dot: _,
+                member_identifier,
+            } => return span_locs(&accessee.kind.get_loc(), &member_identifier.loc),
             ExpressionKind::Range {
                 lower,
                 dotdot,
@@ -238,6 +260,15 @@ impl Location for ExpressionKind {
                 fat_arrow: _,
                 result,
             } => span_locs(&pattern.kind.get_loc(), &result.kind.get_loc()),
+            ExpressionKind::Nil { nil_keyword } => nil_keyword.loc.clone(),
+            ExpressionKind::ForceUnwrap { expression, bang } => {
+                span_locs(&expression.kind.get_loc(), &bang.loc)
+            }
+            ExpressionKind::NilCoalesce {
+                optional,
+                question_colon,
+                default,
+            } => span_locs(&optional.kind.get_loc(), &default.kind.get_loc()),
         }
     }
 }
@@ -272,6 +303,10 @@ pub enum TypeExpressionKind {
         type_name: String,
         param: Token,
     },
+    Optional {
+        question_mark: Token,
+        base_type: Box<TypeExpressionKind>,
+    },
 }
 
 impl Location for TypeExpressionKind {
@@ -296,6 +331,10 @@ impl Location for TypeExpressionKind {
                 close_angle,
             } => span_locs(&generic_type.get_loc(), &close_angle.loc),
             TypeExpressionKind::GenericParameter { type_name, param } => param.loc.clone(),
+            TypeExpressionKind::Optional {
+                question_mark,
+                base_type,
+            } => span_locs(&question_mark.loc, &base_type.get_loc()),
         }
     }
 }
@@ -811,6 +850,15 @@ impl Parser {
                         _ => return Err(ParseError::UnexpectedToken(next)),
                     }
                 }
+                TokenKind::QuestionMark => {
+                    let question_mark = token.clone();
+                    let base_type = self.parse_type_expression_kind(tokens)?;
+
+                    Ok(TypeExpressionKind::Optional {
+                        question_mark,
+                        base_type: Box::new(base_type),
+                    })
+                }
                 _ => Err(ParseError::UnexpectedToken(token.clone())),
             }
         } else {
@@ -965,6 +1013,16 @@ impl Parser {
                             _ => return Ok(left),
                         },
                         TokenKind::Dot => left = Self::parse_accessor(left, tokens)?,
+                        TokenKind::QuestionDot => left = Self::parse_safe_accessor(left, tokens)?,
+                        TokenKind::QuestionColon => left = self.parse_nil_coalesce(left, tokens)?,
+                        TokenKind::Bang => {
+                            left = Expression {
+                                kind: ExpressionKind::ForceUnwrap {
+                                    expression: Box::new(left),
+                                    bang: tokens.next().unwrap().clone(),
+                                },
+                            }
+                        }
                         TokenKind::DotDot => left = self.parse_range(left, tokens)?,
                         TokenKind::ColonColon => match left.kind {
                             ExpressionKind::Variable { identifier } => {
@@ -1009,6 +1067,39 @@ impl Parser {
                 accessee: Box::new(accessee),
                 dot,
                 member_identifier: member,
+            },
+        })
+    }
+
+    fn parse_safe_accessor(
+        accessee: Expression,
+        tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
+    ) -> Result<Expression, ParseError> {
+        let question_dot = Self::expect_token(tokens, TokenKind::QuestionDot)?;
+        let member = Self::expect_token(tokens, TokenKind::Identifier)?;
+
+        Ok(Expression {
+            kind: ExpressionKind::SafeAccessor {
+                accessee: Box::new(accessee),
+                question_dot,
+                member_identifier: member,
+            },
+        })
+    }
+
+    fn parse_nil_coalesce(
+        &mut self,
+        optional: Expression,
+        tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
+    ) -> Result<Expression, ParseError> {
+        let question_colon = Self::expect_token(tokens, TokenKind::QuestionColon)?;
+        let default = self.parse_binary_expression(tokens, 0)?;
+
+        Ok(Expression {
+            kind: ExpressionKind::NilCoalesce {
+                optional: Box::new(optional),
+                question_colon,
+                default: Box::new(default),
             },
         })
     }
@@ -1105,7 +1196,9 @@ impl Parser {
         equals: &Token,
     ) -> Result<Expression, ParseError> {
         if let Some(_) = tokens.peek() {
+            self.allow_record_literals.push(true);
             let rhs = self.parse_binary_expression(tokens, 0)?;
+            self.allow_record_literals.pop();
             return Ok(Expression {
                 kind: ExpressionKind::Assignment {
                     lhs: Box::new(lhs),
@@ -1269,6 +1362,11 @@ impl Parser {
                 TokenKind::Identifier => Ok(Expression {
                     kind: ExpressionKind::Variable {
                         identifier: current_token.clone(),
+                    },
+                }),
+                TokenKind::NilKeyword => Ok(Expression {
+                    kind: ExpressionKind::Nil {
+                        nil_keyword: current_token.clone(),
                     },
                 }),
                 _ => Err(ParseError::UnexpectedToken(current_token.clone())),

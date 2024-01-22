@@ -31,6 +31,7 @@ pub enum TypeKind {
     Range(Box<TypeKind>, Box<TypeKind>),
     Enum(String, Vec<String>),
     GenericParameter(String),
+    Optional(Box<TypeKind>),
     //TMP
     File,
 }
@@ -81,6 +82,7 @@ impl fmt::Display for TypeKind {
             TypeKind::Enum(name, _) => write!(f, "{}", name),
             TypeKind::GenericParameter(name) => write!(f, "{}", name),
             TypeKind::File => write!(f, "file"),
+            TypeKind::Optional(base_type) => write!(f, "?{}", base_type),
         }
     }
 }
@@ -167,6 +169,12 @@ pub enum TypeCheckError {
     ArgLengthMismatch {
         expected: usize,
         actual: usize,
+        loc: Loc,
+    },
+    CannotDeduceTypeFromContext(Loc),
+    NonNillableType(TypeKind, Loc),
+    CannotPassOptionalTypeToFunction {
+        type_kind: TypeKind,
         loc: Loc,
     },
 }
@@ -299,6 +307,14 @@ pub enum CheckedExpressionKind {
         accessee: Box<CheckedExpression>,
         member: String,
     },
+    SafeAccessor {
+        accessee: Box<CheckedExpression>,
+        member: String,
+    },
+    NilCoalesce {
+        optional: Box<CheckedExpression>,
+        default: Box<CheckedExpression>,
+    },
     StringLiteral {
         value: String,
     },
@@ -309,6 +325,10 @@ pub enum CheckedExpressionKind {
     MatchCase {
         pattern: Box<CheckedExpression>,
         result: Box<CheckedExpression>,
+    },
+    Nil,
+    ForceUnwrap {
+        expression: Box<CheckedExpression>,
     },
 }
 
@@ -358,7 +378,7 @@ impl Scope {
             types: HashMap::new(),
             generic_erasures: HashMap::new(),
             return_context: TypeKind::Unit,
-            assign_context: vec![TypeKind::Unit],
+            assign_context: vec![],
         };
 
         // TODO: package this into a module that must be imported
@@ -410,7 +430,7 @@ impl Scope {
             CheckedFunction {
                 name: "file_open".to_owned(),
                 args: vec![TypeKind::String, TypeKind::String],
-                return_type: Some(TypeKind::File),
+                return_type: Some(TypeKind::Optional(Box::new(TypeKind::File))),
                 declaration_loc: Loc {
                     file: "".to_owned(),
                     row: 0,
@@ -625,7 +645,7 @@ impl Scope {
         member_name: &String,
         loc: &Loc,
     ) -> Result<&CheckedVariable, TypeCheckError> {
-        return match self.modules.get(module_name) {
+        match self.modules.get(module_name) {
             Some(module) => {
                 return module.try_get_variable(member_name, loc);
             }
@@ -767,6 +787,14 @@ impl Scope {
                         }),
                     },
                 }
+            }
+            TypeExpressionKind::Optional {
+                question_mark: _,
+                base_type,
+            } => {
+                let checked_base_type = self.try_get_type(&base_type)?;
+
+                Ok(TypeKind::Optional(Box::new(checked_base_type)))
             }
         }
     }
@@ -1035,7 +1063,9 @@ impl TypeChecker {
                             } else {
                                 type_kind = self.scope.try_get_type(&type_expression_kind)?;
                             }
-                        };
+                        } else {
+                            type_kind = self.scope.try_get_type(type_expression_kind)?;
+                        }
 
                         checked_members.push(CheckedVariable {
                             name: member_identifier.text.clone(),
@@ -1372,68 +1402,72 @@ impl TypeChecker {
         expression: &Expression,
     ) -> Result<CheckedExpression, TypeCheckError> {
         //TODO: the generic matching needs to be applied to ALL expressions, not just literals!!!!
+        //same for optionals
 
-        let checked_expression_result: Result<CheckedExpression, TypeCheckError> =
-            match &expression.kind {
-                ExpressionKind::BoolLiteral { token } => {
-                    let (type_kind, checked_expression_kind) =
-                        match self.scope.assign_context.last().unwrap() {
-                            TypeKind::Bool => (
-                                TypeKind::Bool,
-                                CheckedExpressionKind::BoolLiteral {
-                                    value: match token.text.as_str() {
-                                        "true" => true,
-                                        "false" => false,
-                                        _ => unreachable!(),
-                                    },
+        let checked_expression_result: Result<CheckedExpression, TypeCheckError> = match &expression
+            .kind
+        {
+            ExpressionKind::BoolLiteral { token } => {
+                let (type_kind, checked_expression_kind) =
+                    match self.scope.assign_context.last().unwrap() {
+                        TypeKind::Bool => (
+                            TypeKind::Bool,
+                            CheckedExpressionKind::BoolLiteral {
+                                value: match token.text.as_str() {
+                                    "true" => true,
+                                    "false" => false,
+                                    _ => unreachable!(),
                                 },
-                            ),
-                            TypeKind::GenericParameter(name) => {
-                                match self.scope.try_get_generic_erasure(name) {
-                                    Some(concrete_type) => {
-                                        self.expect_type(
-                                            concrete_type.clone(),
-                                            TypeKind::Bool,
-                                            token.loc.clone(),
-                                        )?;
-                                        (
-                                            concrete_type,
-                                            CheckedExpressionKind::BoolLiteral {
-                                                value: token.text.parse().expect("should not fail"),
-                                            },
-                                        )
-                                    }
-                                    None => {
-                                        self.scope
-                                            .generic_erasures
-                                            .insert(name.clone(), TypeKind::Bool);
-                                        (
-                                            TypeKind::Bool,
-                                            CheckedExpressionKind::BoolLiteral {
-                                                value: token.text.parse().expect("should not fail"),
-                                            },
-                                        )
-                                    }
+                            },
+                        ),
+                        TypeKind::GenericParameter(name) => {
+                            match self.scope.try_get_generic_erasure(name) {
+                                Some(concrete_type) => {
+                                    self.expect_type(
+                                        concrete_type.clone(),
+                                        TypeKind::Bool,
+                                        token.loc.clone(),
+                                    )?;
+                                    (
+                                        concrete_type,
+                                        CheckedExpressionKind::BoolLiteral {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
+                                }
+                                None => {
+                                    self.scope
+                                        .generic_erasures
+                                        .insert(name.clone(), TypeKind::Bool);
+                                    (
+                                        TypeKind::Bool,
+                                        CheckedExpressionKind::BoolLiteral {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
                                 }
                             }
-                            _ => {
-                                return Err(TypeCheckError::TypeMismatch {
-                                    expected: self.scope.assign_context.last().unwrap().clone(),
-                                    actual: TypeKind::Bool,
-                                    loc: expression.kind.get_loc().clone(),
-                                })
-                            }
-                        };
-                    Ok(CheckedExpression {
-                        kind: checked_expression_kind,
-                        type_kind,
-                        loc: expression.kind.get_loc().clone(),
-                    })
-                }
-                ExpressionKind::IntLiteral { token } => {
-                    let (type_kind, checked_expression_kind) =
-                        match self.scope.assign_context.last().unwrap() {
-                            TypeKind::Unit | TypeKind::U32 => (
+                        }
+                        _ => {
+                            return Err(TypeCheckError::TypeMismatch {
+                                expected: self.scope.assign_context.last().unwrap().clone(),
+                                actual: TypeKind::Bool,
+                                loc: expression.kind.get_loc().clone(),
+                            })
+                        }
+                    };
+                Ok(CheckedExpression {
+                    kind: checked_expression_kind,
+                    type_kind,
+                    loc: expression.kind.get_loc().clone(),
+                })
+            }
+            ExpressionKind::IntLiteral { token } => {
+                let (type_kind, checked_expression_kind) =
+                    match self.scope.assign_context.clone().last() {
+                        //oof that clone
+                        Some(assign_context_type) => match assign_context_type {
+                            TypeKind::U32 => (
                                 TypeKind::U32,
                                 CheckedExpressionKind::U32Literal {
                                     value: token.text.parse().expect("should not fail"),
@@ -1494,7 +1528,7 @@ impl TypeChecker {
                                 },
                             ),
                             TypeKind::GenericParameter(name) => {
-                                match self.scope.try_get_generic_erasure(name) {
+                                match self.scope.try_get_generic_erasure(&name) {
                                     Some(concrete_type) => {
                                         self.expect_type(
                                             concrete_type.clone(),
@@ -1520,446 +1554,555 @@ impl TypeChecker {
                                         )
                                     }
                                 }
+                            }
+                            TypeKind::Optional(base_type) => {
+                                self.scope.assign_context.push(*base_type.clone());
+
+                                let checked_expr = self.type_check_expression(expression)?;
+
+                                self.scope.assign_context.pop();
+
+                                (TypeKind::Optional(base_type.clone()), checked_expr.kind)
                             }
                             _ => {
                                 return Err(TypeCheckError::TypeMismatch {
                                     expected: self.scope.assign_context.last().unwrap().clone(),
-                                    actual: TypeKind::U32,
+                                    actual: TypeKind::I32,
                                     loc: expression.kind.get_loc().clone(),
                                 })
                             }
-                        };
-                    Ok(CheckedExpression {
-                        kind: checked_expression_kind,
-                        type_kind,
-                        loc: expression.kind.get_loc().clone(),
-                    })
-                }
-                ExpressionKind::RealLiteral { token } => {
-                    let (type_kind, checked_expression_kind) =
-                        match self.scope.assign_context.last().unwrap() {
-                            TypeKind::Unit | TypeKind::F32 | TypeKind::I32 => (
-                                TypeKind::F32,
-                                CheckedExpressionKind::F32Literal {
-                                    value: token.text.parse().expect("should not fail"),
-                                },
-                            ),
-                            TypeKind::F64 | TypeKind::I64 => (
-                                TypeKind::F64,
-                                CheckedExpressionKind::F64Literal {
-                                    value: token.text.parse().expect("should not fail"),
-                                },
-                            ),
-                            TypeKind::GenericParameter(name) => {
-                                match self.scope.try_get_generic_erasure(name) {
-                                    Some(concrete_type) => {
-                                        self.expect_type(
-                                            concrete_type.clone(),
-                                            TypeKind::F32,
-                                            token.loc.clone(),
-                                        )?;
-                                        (
-                                            concrete_type,
-                                            CheckedExpressionKind::F32Literal {
-                                                value: token.text.parse().expect("should not fail"),
-                                            },
-                                        )
-                                    }
-                                    None => {
-                                        self.scope
-                                            .generic_erasures
-                                            .insert(name.clone(), TypeKind::F32);
-                                        (
-                                            TypeKind::F32,
-                                            CheckedExpressionKind::F32Literal {
-                                                value: token.text.parse().expect("should not fail"),
-                                            },
-                                        )
-                                    }
+                        },
+                        None => (
+                            TypeKind::I32,
+                            CheckedExpressionKind::I32Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                    };
+                Ok(CheckedExpression {
+                    kind: checked_expression_kind,
+                    type_kind,
+                    loc: expression.kind.get_loc().clone(),
+                })
+            }
+            ExpressionKind::RealLiteral { token } => {
+                let (type_kind, checked_expression_kind) =
+                    match self.scope.assign_context.last().unwrap() {
+                        TypeKind::Unit | TypeKind::F32 | TypeKind::I32 => (
+                            TypeKind::F32,
+                            CheckedExpressionKind::F32Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::F64 | TypeKind::I64 => (
+                            TypeKind::F64,
+                            CheckedExpressionKind::F64Literal {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::GenericParameter(name) => {
+                            match self.scope.try_get_generic_erasure(name) {
+                                Some(concrete_type) => {
+                                    self.expect_type(
+                                        concrete_type.clone(),
+                                        TypeKind::F32,
+                                        token.loc.clone(),
+                                    )?;
+                                    (
+                                        concrete_type,
+                                        CheckedExpressionKind::F32Literal {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
+                                }
+                                None => {
+                                    self.scope
+                                        .generic_erasures
+                                        .insert(name.clone(), TypeKind::F32);
+                                    (
+                                        TypeKind::F32,
+                                        CheckedExpressionKind::F32Literal {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
                                 }
                             }
-                            _ => unreachable!("{:?}", self.scope.assign_context),
-                        };
-                    Ok(CheckedExpression {
-                        kind: checked_expression_kind,
-                        type_kind,
-                        loc: expression.kind.get_loc().clone(),
-                    })
-                }
-                ExpressionKind::StringLiteral { token } => Ok(CheckedExpression {
-                    kind: CheckedExpressionKind::StringLiteral {
-                        value: token.text.to_owned(),
-                    },
-                    type_kind: TypeKind::String,
+                        }
+                        _ => unreachable!("{:?}", self.scope.assign_context),
+                    };
+                Ok(CheckedExpression {
+                    kind: checked_expression_kind,
+                    type_kind,
                     loc: expression.kind.get_loc().clone(),
-                }),
-                ExpressionKind::Unary { op, operand } => {
-                    let checked_operand = self.type_check_expression(&operand)?;
+                })
+            }
+            ExpressionKind::StringLiteral { token } => Ok(CheckedExpression {
+                kind: CheckedExpressionKind::StringLiteral {
+                    value: token.text.to_owned(),
+                },
+                type_kind: TypeKind::String,
+                loc: expression.kind.get_loc().clone(),
+            }),
+            ExpressionKind::Unary { op, operand } => {
+                let checked_operand = self.type_check_expression(&operand)?;
 
-                    let type_kind = Self::check_unary_expression(&op, &checked_operand.type_kind)?;
+                let type_kind = Self::check_unary_expression(&op, &checked_operand.type_kind)?;
 
-                    Ok(CheckedExpression {
-                        kind: CheckedExpressionKind::Unary {
-                            op: op.kind.clone(),
-                            operand: Box::new(checked_operand),
-                        },
-                        type_kind,
-                        loc: expression.kind.get_loc().clone(),
-                    })
-                }
-                ExpressionKind::Binary { left, op, right } => {
-                    let checked_left = self.type_check_expression(&left)?;
-                    let checked_right = self.type_check_expression(&right)?;
+                Ok(CheckedExpression {
+                    kind: CheckedExpressionKind::Unary {
+                        op: op.kind.clone(),
+                        operand: Box::new(checked_operand),
+                    },
+                    type_kind,
+                    loc: expression.kind.get_loc().clone(),
+                })
+            }
+            ExpressionKind::Binary { left, op, right } => {
+                let checked_left = self.type_check_expression(&left)?;
 
-                    let type_kind = Self::check_binary_expression(
-                        &checked_left.type_kind,
-                        &op,
-                        &checked_right.type_kind,
-                    )?;
+                self.scope
+                    .assign_context
+                    .push(checked_left.type_kind.clone());
 
-                    Ok(CheckedExpression {
-                        kind: CheckedExpressionKind::Binary {
-                            left: Box::new(checked_left),
-                            op: op.kind.clone(),
-                            right: Box::new(checked_right),
-                        },
-                        type_kind,
-                        loc: expression.kind.get_loc().clone(),
-                    })
-                }
-                ExpressionKind::Parenthesised { expression } => {
-                    let checked_inner = self.type_check_expression(&expression)?;
-                    let checked_type = checked_inner.type_kind.clone();
+                let checked_right = self.type_check_expression(&right)?;
 
-                    Ok(CheckedExpression {
-                        kind: CheckedExpressionKind::Parenthesised {
-                            expression: Box::new(checked_inner),
-                        },
-                        type_kind: checked_type,
-                        loc: expression.kind.get_loc().clone(),
-                    })
-                }
-                ExpressionKind::Assignment {
-                    lhs,
-                    equals: _,
-                    rhs,
-                } => {
-                    let checked_lhs = self.type_check_expression(lhs)?;
-                    let checked_rhs = self.type_check_expression(rhs)?;
+                self.scope.assign_context.pop();
 
-                    if !self.is_assignable_from(&checked_rhs.type_kind, &checked_lhs.type_kind) {
-                        return Err(TypeCheckError::TypeMismatch {
-                            expected: checked_lhs.type_kind,
-                            actual: checked_rhs.type_kind,
-                            loc: rhs.kind.get_loc().clone(),
-                        });
-                    }
+                let type_kind = Self::check_binary_expression(
+                    &checked_left.type_kind,
+                    &op,
+                    &checked_right.type_kind,
+                )?;
 
-                    return Ok(CheckedExpression {
-                        type_kind: checked_lhs.type_kind.clone(),
-                        kind: CheckedExpressionKind::Assignment {
-                            lhs: Box::new(checked_lhs),
-                            rhs: Box::new(checked_rhs),
-                        },
-                        loc: expression.kind.get_loc().clone(),
+                Ok(CheckedExpression {
+                    kind: CheckedExpressionKind::Binary {
+                        left: Box::new(checked_left),
+                        op: op.kind.clone(),
+                        right: Box::new(checked_right),
+                    },
+                    type_kind,
+                    loc: expression.kind.get_loc().clone(),
+                })
+            }
+            ExpressionKind::Parenthesised { expression } => {
+                let checked_inner = self.type_check_expression(&expression)?;
+                let checked_type = checked_inner.type_kind.clone();
+
+                Ok(CheckedExpression {
+                    kind: CheckedExpressionKind::Parenthesised {
+                        expression: Box::new(checked_inner),
+                    },
+                    type_kind: checked_type,
+                    loc: expression.kind.get_loc().clone(),
+                })
+            }
+            ExpressionKind::Assignment {
+                lhs,
+                equals: _,
+                rhs,
+            } => {
+                let checked_lhs = self.type_check_expression(lhs)?;
+
+                self.scope
+                    .assign_context
+                    .push(checked_lhs.type_kind.clone());
+
+                let checked_rhs = self.type_check_expression(rhs)?;
+
+                self.scope.assign_context.pop();
+
+                if !self.is_assignable_from(&checked_rhs.type_kind, &checked_lhs.type_kind) {
+                    return Err(TypeCheckError::TypeMismatch {
+                        expected: checked_lhs.type_kind,
+                        actual: checked_rhs.type_kind,
+                        loc: rhs.kind.get_loc().clone(),
                     });
                 }
-                ExpressionKind::Variable { identifier } => {
-                    return match self
-                        .scope
-                        .try_get_variable(&identifier.text, &identifier.loc)
-                    {
-                        Ok(variable) => Ok(CheckedExpression {
-                            kind: CheckedExpressionKind::Variable {
-                                variable: variable.clone(),
-                            },
-                            type_kind: variable.type_kind.clone(),
-                            loc: expression.kind.get_loc().clone(),
-                        }),
-                        // Err(_) => match self.scope.try_get_lookup_override(
-                        //     &identifier.text,
-                        //     &expression.kind.get_loc().clone(),
-                        // ) {
-                        //     Ok((record_name, member)) => Ok(CheckedExpression {
-                        //         kind: CheckedExpressionKind::Accessor {
-                        //             accessee: Box::new(CheckedExpression {
-                        //                 kind: CheckedExpressionKind::Variable {
-                        //                     name: record_name.clone(),
-                        //                 },
-                        //                 type_kind: member.type_kind.clone(),
-                        //                 loc: expression.kind.get_loc().clone(),
-                        //             }),
-                        //             member: member.name.clone(),
-                        //         },
-                        //         type_kind: member.type_kind.clone(),
-                        //         loc: expression.kind.get_loc().clone(),
-                        //     }),
-                        Err(e) => Err(e),
-                    };
-                }
-                ExpressionKind::TypeAnnotation { .. } => {
-                    unreachable!("Should be handled in another function")
-                }
-                ExpressionKind::FunctionCall {
-                    callee,
-                    open_paren,
-                    args,
-                    close_paren,
-                } => {
-                    let loc = callee.kind.get_loc().clone();
-                    let mut args: Vec<Expression> = args.to_owned();
-                    let name = match &callee.kind {
-                        ExpressionKind::Variable { identifier } => &identifier.text,
-                        ExpressionKind::Accessor {
-                            accessee,
-                            dot: _,
-                            member_identifier,
-                        } => {
-                            args.insert(0, *accessee.clone());
 
-                            &member_identifier.text
-                        }
-                        _ => todo!("{:?}", callee.kind),
-                    };
+                return Ok(CheckedExpression {
+                    type_kind: checked_lhs.type_kind.clone(),
+                    kind: CheckedExpressionKind::Assignment {
+                        lhs: Box::new(checked_lhs),
+                        rhs: Box::new(checked_rhs),
+                    },
+                    loc: expression.kind.get_loc().clone(),
+                });
+            }
+            ExpressionKind::Variable { identifier } => {
+                return match self
+                    .scope
+                    .try_get_variable(&identifier.text, &identifier.loc)
+                {
+                    Ok(variable) => Ok(CheckedExpression {
+                        kind: CheckedExpressionKind::Variable {
+                            variable: variable.clone(),
+                        },
+                        type_kind: variable.type_kind.clone(),
+                        loc: expression.kind.get_loc().clone(),
+                    }),
+                    // Err(_) => match self.scope.try_get_lookup_override(
+                    //     &identifier.text,
+                    //     &expression.kind.get_loc().clone(),
+                    // ) {
+                    //     Ok((record_name, member)) => Ok(CheckedExpression {
+                    //         kind: CheckedExpressionKind::Accessor {
+                    //             accessee: Box::new(CheckedExpression {
+                    //                 kind: CheckedExpressionKind::Variable {
+                    //                     name: record_name.clone(),
+                    //                 },
+                    //                 type_kind: member.type_kind.clone(),
+                    //                 loc: expression.kind.get_loc().clone(),
+                    //             }),
+                    //             member: member.name.clone(),
+                    //         },
+                    //         type_kind: member.type_kind.clone(),
+                    //         loc: expression.kind.get_loc().clone(),
+                    //     }),
+                    Err(e) => Err(e),
+                };
+            }
+            ExpressionKind::TypeAnnotation { .. } => {
+                unreachable!("Should be handled in another function")
+            }
+            ExpressionKind::FunctionCall {
+                callee,
+                open_paren,
+                args,
+                close_paren,
+            } => {
+                let loc = callee.kind.get_loc().clone();
+                let mut args: Vec<Expression> = args.to_owned();
+                let name = match &callee.kind {
+                    ExpressionKind::Variable { identifier } => &identifier.text,
+                    ExpressionKind::Accessor {
+                        accessee,
+                        dot: _,
+                        member_identifier,
+                    } => {
+                        args.insert(0, *accessee.clone());
 
-                    //TMP
-                    if name == "print" {
-                        return Ok(CheckedExpression {
-                            kind: CheckedExpressionKind::FunctionCall {
-                                name: "print".to_owned(),
-                                args: vec![self.type_check_expression(&args[0])?],
-                            },
-                            type_kind: TypeKind::Unit,
-                            loc,
+                        &member_identifier.text
+                    }
+                    ExpressionKind::SafeAccessor {
+                        accessee,
+                        question_dot: _,
+                        member_identifier,
+                    } => {
+                        args.insert(0, *accessee.clone());
+
+                        &member_identifier.text
+                    }
+                    _ => todo!("{:?}", callee.kind),
+                };
+
+                //TMP
+                if name == "print" {
+                    let checked_arg = self.type_check_expression(&args[0])?;
+                    if let TypeKind::Optional(base_type) = &checked_arg.type_kind {
+                        return Err(TypeCheckError::CannotPassOptionalTypeToFunction {
+                            type_kind: checked_arg.type_kind,
+                            loc: args[0].kind.get_loc(),
                         });
                     }
-                    if name == "println" {
-                        return Ok(CheckedExpression {
-                            kind: CheckedExpressionKind::FunctionCall {
-                                name: "println".to_owned(),
-                                args: vec![self.type_check_expression(&args[0])?],
-                            },
-                            type_kind: TypeKind::Unit,
-                            loc,
-                        });
-                    }
-                    //ENDTMP
-
-                    let checked_function = self
-                        .scope
-                        .try_get_function(&name, &callee.kind.get_loc())?
-                        .clone();
-
-                    let mut checked_args: Vec<CheckedExpression> = Vec::new();
-
-                    if args.len() != checked_function.args.len() {
-                        return Err(TypeCheckError::ArgLengthMismatch {
-                            expected: checked_function.args.len(),
-                            actual: args.len(),
-                            loc: span_locs(&open_paren.loc, &close_paren.loc),
-                        });
-                    }
-
-                    for (i, arg) in args.iter().enumerate() {
-                        self.scope
-                            .assign_context
-                            .push(checked_function.args.get(i).unwrap().clone());
-
-                        let checked_arg = self.type_check_expression(arg)?;
-
-                        self.scope.assign_context.pop();
-
-                        self.expect_type(
-                            checked_function.args.get(i).unwrap().clone(),
-                            checked_arg.type_kind.clone(),
-                            arg.kind.get_loc().clone(),
-                        )?;
-
-                        checked_args.push(checked_arg);
-                    }
-
                     return Ok(CheckedExpression {
                         kind: CheckedExpressionKind::FunctionCall {
-                            name: name.clone(),
-                            args: checked_args,
+                            name: "print".to_owned(),
+                            args: vec![checked_arg],
                         },
-                        type_kind: checked_function
-                            .return_type
-                            .clone()
-                            .unwrap_or(TypeKind::Unit),
+                        type_kind: TypeKind::Unit,
                         loc,
                     });
                 }
-                ExpressionKind::ArrayLiteral {
-                    array_type_expression_kind,
-                    open_curly,
-                    elements,
-                    close_curly,
-                } => {
-                    let array_type = self.scope.try_get_type(array_type_expression_kind)?;
-
-                    match &array_type {
-                        TypeKind::Array(size, element_type) => {
-                            let mut checked_elements: Vec<CheckedExpression> = Vec::new();
-
-                            self.scope.assign_context.push(*element_type.clone());
-
-                            for element in elements {
-                                let checked_element = self.type_check_expression(element)?;
-
-                                self.expect_type(
-                                    *element_type.clone(),
-                                    checked_element.type_kind.clone(),
-                                    element.kind.get_loc().clone(),
-                                )?;
-
-                                checked_elements.push(checked_element);
-                            }
-                            self.scope.assign_context.pop();
-
-                            if size != &elements.len() {
-                                return Err(TypeCheckError::TypeMismatch {
-                                    expected: array_type.clone(),
-                                    actual: TypeKind::Array(elements.len(), element_type.clone()),
-                                    loc: span_locs(&open_curly.loc, &close_curly.loc),
-                                });
-                            }
-
-                            Ok(CheckedExpression {
-                                kind: CheckedExpressionKind::ArrayLiteral {
-                                    elements: checked_elements,
-                                },
-                                type_kind: TypeKind::Array(elements.len(), element_type.to_owned()),
-                                loc: expression.kind.get_loc(),
-                            })
-                        }
-                        TypeKind::Slice(element_type) => todo!("Slice literals!"),
-                        _ => unreachable!(),
+                if name == "println" {
+                    let checked_arg = self.type_check_expression(&args[0])?;
+                    if let TypeKind::Optional(base_type) = &checked_arg.type_kind {
+                        return Err(TypeCheckError::CannotPassOptionalTypeToFunction {
+                            type_kind: checked_arg.type_kind,
+                            loc: args[0].kind.get_loc(),
+                        });
                     }
+                    return Ok(CheckedExpression {
+                        kind: CheckedExpressionKind::FunctionCall {
+                            name: "println".to_owned(),
+                            args: vec![checked_arg],
+                        },
+                        type_kind: TypeKind::Unit,
+                        loc,
+                    });
                 }
-                ExpressionKind::ArrayIndex { array, index } => {
-                    let checked_array = self.type_check_expression(&array)?;
+                //ENDTMP
 
-                    match &checked_array.type_kind.clone() {
-                        TypeKind::Array(_, el_type) | TypeKind::Slice(el_type) => {
-                            let checked_index = self.type_check_expression(index)?;
+                let checked_function = self
+                    .scope
+                    .try_get_function(&name, &callee.kind.get_loc())?
+                    .clone();
 
-                            if !Self::is_integer_type(&checked_index.type_kind) {
-                                return Err(TypeCheckError::TypeMismatch {
-                                    expected: TypeKind::U32,
-                                    actual: checked_index.type_kind,
-                                    loc: index.kind.get_loc().clone(),
-                                });
-                            }
+                let mut checked_args: Vec<CheckedExpression> = Vec::new();
 
-                            return Ok(CheckedExpression {
-                                kind: CheckedExpressionKind::ArrayIndex {
-                                    array: Box::new(checked_array),
-                                    index: Box::new(checked_index),
-                                },
-                                type_kind: *el_type.clone(),
+                if args.len() != checked_function.args.len() {
+                    return Err(TypeCheckError::ArgLengthMismatch {
+                        expected: checked_function.args.len(),
+                        actual: args.len(),
+                        loc: span_locs(&open_paren.loc, &close_paren.loc),
+                    });
+                }
+
+                for (i, arg) in args.iter().enumerate() {
+                    self.scope
+                        .assign_context
+                        .push(checked_function.args.get(i).unwrap().clone());
+
+                    let checked_arg = self.type_check_expression(arg)?;
+
+                    self.scope.assign_context.pop();
+
+                    self.expect_type(
+                        checked_function.args.get(i).unwrap().clone(),
+                        checked_arg.type_kind.clone(),
+                        arg.kind.get_loc().clone(),
+                    )?;
+
+                    checked_args.push(checked_arg);
+                }
+
+                return Ok(CheckedExpression {
+                    kind: CheckedExpressionKind::FunctionCall {
+                        name: name.clone(),
+                        args: checked_args,
+                    },
+                    type_kind: checked_function
+                        .return_type
+                        .clone()
+                        .unwrap_or(TypeKind::Unit),
+                    loc,
+                });
+            }
+            ExpressionKind::ArrayLiteral {
+                array_type_expression_kind,
+                open_curly,
+                elements,
+                close_curly,
+            } => {
+                let array_type = self.scope.try_get_type(array_type_expression_kind)?;
+
+                match &array_type {
+                    TypeKind::Array(size, element_type) => {
+                        let mut checked_elements: Vec<CheckedExpression> = Vec::new();
+
+                        self.scope.assign_context.push(*element_type.clone());
+
+                        for element in elements {
+                            let checked_element = self.type_check_expression(element)?;
+
+                            self.expect_type(
+                                *element_type.clone(),
+                                checked_element.type_kind.clone(),
+                                element.kind.get_loc().clone(),
+                            )?;
+
+                            checked_elements.push(checked_element);
+                        }
+                        self.scope.assign_context.pop();
+
+                        if size != &elements.len() {
+                            return Err(TypeCheckError::TypeMismatch {
+                                expected: array_type.clone(),
+                                actual: TypeKind::Array(elements.len(), element_type.clone()),
+                                loc: span_locs(&open_curly.loc, &close_curly.loc),
+                            });
+                        }
+
+                        Ok(CheckedExpression {
+                            kind: CheckedExpressionKind::ArrayLiteral {
+                                elements: checked_elements,
+                            },
+                            type_kind: TypeKind::Array(elements.len(), element_type.to_owned()),
+                            loc: expression.kind.get_loc(),
+                        })
+                    }
+                    TypeKind::Slice(element_type) => todo!("Slice literals!"),
+                    _ => unreachable!(),
+                }
+            }
+            ExpressionKind::ArrayIndex { array, index } => {
+                let checked_array = self.type_check_expression(&array)?;
+
+                match &checked_array.type_kind.clone() {
+                    TypeKind::Array(_, el_type) | TypeKind::Slice(el_type) => {
+                        let checked_index = self.type_check_expression(index)?;
+
+                        if !Self::is_integer_type(&checked_index.type_kind) {
+                            return Err(TypeCheckError::TypeMismatch {
+                                expected: TypeKind::U32,
+                                actual: checked_index.type_kind,
                                 loc: index.kind.get_loc().clone(),
                             });
                         }
-                        _ => (),
+
+                        return Ok(CheckedExpression {
+                            kind: CheckedExpressionKind::ArrayIndex {
+                                array: Box::new(checked_array),
+                                index: Box::new(checked_index),
+                            },
+                            type_kind: *el_type.clone(),
+                            loc: index.kind.get_loc().clone(),
+                        });
                     }
-                    Err(TypeCheckError::CannotIndexType {
-                        type_kind: checked_array.type_kind,
-                        loc: array.kind.get_loc().clone(),
-                    })
+                    _ => (),
                 }
-                ExpressionKind::RecordLiteral {
-                    record_identifier,
-                    open_curly,
-                    args,
-                    close_curly,
-                } => {
-                    let record_name = record_identifier.text.to_owned();
-                    let record_type = self.scope.try_get_type(&TypeExpressionKind::Basic {
-                        identifier: record_identifier.clone(),
-                    })?;
+                Err(TypeCheckError::CannotIndexType {
+                    type_kind: checked_array.type_kind,
+                    loc: array.kind.get_loc().clone(),
+                })
+            }
+            ExpressionKind::RecordLiteral {
+                record_identifier,
+                open_curly,
+                args,
+                close_curly,
+            } => {
+                let record_name = record_identifier.text.to_owned();
+                let record_type = self.scope.try_get_type(&TypeExpressionKind::Basic {
+                    identifier: record_identifier.clone(),
+                })?;
 
-                    if let TypeKind::Record(name, generic_params, members) = &record_type {
-                        let outer_scope = self.scope.clone();
-                        self.scope = Scope::new_inner_scope(outer_scope.clone());
+                let (type_kind, checked_expression_kind) = match self
+                    .scope
+                    .assign_context
+                    .clone()
+                    .last()
+                    .expect("no context")
+                {
+                    TypeKind::Optional(base_type) => {
+                        self.scope.assign_context.push(*base_type.clone());
 
-                        let n_members = members.len();
+                        let checked_expr = self.type_check_expression(expression)?;
 
-                        //generic_params = T, U, V etc
-                        let mut checked_args: Vec<CheckedExpression> = Vec::new();
-                        for (i, member) in members.into_iter().enumerate() {
-                            match args.get(i) {
-                                Some(arg) => {
-                                    self.scope.assign_context.push(member.type_kind.clone());
-                                    let checked_arg = self.type_check_expression(arg)?;
+                        self.scope.assign_context.pop();
 
-                                    //TODO: this needs to erase record_type's generics
+                        (TypeKind::Optional(base_type.clone()), checked_expr.kind)
+                    }
+                    _ => {
+                        if let TypeKind::Record(name, generic_params, members) = &record_type {
+                            let outer_scope = self.scope.clone();
+                            self.scope = Scope::new_inner_scope(outer_scope.clone());
 
-                                    self.scope.assign_context.pop();
+                            let n_members = members.len();
 
-                                    self.expect_type(
-                                        member.type_kind.clone(),
-                                        checked_arg.type_kind.clone(),
-                                        arg.kind.get_loc().clone(),
-                                    )?;
-                                    checked_args.push(checked_arg);
-                                }
-                                None => {
-                                    return Err(TypeCheckError::MissingArgForRecord {
-                                        record_name: name.clone(),
-                                        name: member.name.clone(),
-                                        type_kind: member.type_kind.clone(),
-                                        loc: close_curly.loc.clone(),
-                                    })
+                            //generic_params = T, U, V etc
+                            let mut checked_args: Vec<CheckedExpression> = Vec::new();
+                            for (i, member) in members.into_iter().enumerate() {
+                                match args.get(i) {
+                                    Some(arg) => {
+                                        self.scope.assign_context.push(member.type_kind.clone());
+                                        let checked_arg = self.type_check_expression(arg)?;
+
+                                        //TODO: this needs to erase record_type's generics
+
+                                        self.scope.assign_context.pop();
+
+                                        self.expect_type(
+                                            member.type_kind.clone(),
+                                            checked_arg.type_kind.clone(),
+                                            arg.kind.get_loc().clone(),
+                                        )?;
+                                        checked_args.push(checked_arg);
+                                    }
+                                    None => {
+                                        return Err(TypeCheckError::MissingArgForRecord {
+                                            record_name: name.clone(),
+                                            name: member.name.clone(),
+                                            type_kind: member.type_kind.clone(),
+                                            loc: close_curly.loc.clone(),
+                                        })
+                                    }
                                 }
                             }
-                        }
 
-                        self.scope = outer_scope;
+                            self.scope = outer_scope;
 
-                        if args.len() > n_members {
-                            let checked_arg = self.type_check_expression(&args[n_members])?;
-                            return Err(TypeCheckError::UnexpectedArgForRecord {
-                                type_kind: checked_arg.type_kind,
-                                record_name: record_name.clone(),
-                                loc: args[n_members].kind.get_loc().clone(),
+                            if args.len() > n_members {
+                                let checked_arg = self.type_check_expression(&args[n_members])?;
+                                return Err(TypeCheckError::UnexpectedArgForRecord {
+                                    type_kind: checked_arg.type_kind,
+                                    record_name: record_name.clone(),
+                                    loc: args[n_members].kind.get_loc().clone(),
+                                });
+                            }
+                            (
+                                record_type,
+                                CheckedExpressionKind::RecordLiteral {
+                                    arguments: checked_args,
+                                },
+                            )
+                        } else {
+                            //TODO: maybe better error
+                            println!("sneep");
+                            return Err(TypeCheckError::NoSuchTypeDeclaredInScope {
+                                name: record_name.clone(),
+                                loc: open_curly.loc.clone(),
                             });
                         }
-                        Ok(CheckedExpression {
-                            kind: CheckedExpressionKind::RecordLiteral {
-                                arguments: checked_args,
+                    }
+                };
+
+                Ok(CheckedExpression {
+                    kind: checked_expression_kind,
+                    type_kind,
+                    loc: open_curly.loc.clone(),
+                })
+            }
+            ExpressionKind::Accessor {
+                accessee,
+                dot,
+                member_identifier,
+            } => {
+                let checked_accessee = self.type_check_expression(&accessee)?;
+                if let TypeKind::Record(name, generic_params, members) =
+                    &checked_accessee.type_kind.clone()
+                {
+                    let member_name = &member_identifier.text;
+
+                    if let Some(member) = members.iter().find(|m| &m.name == member_name) {
+                        return Ok(CheckedExpression {
+                            kind: CheckedExpressionKind::Accessor {
+                                accessee: Box::new(checked_accessee),
+                                member: member.name.to_string(),
                             },
-                            type_kind: record_type,
-                            loc: open_curly.loc.clone(),
-                        })
+                            type_kind: member.type_kind.clone(),
+                            loc: dot.loc.clone(),
+                        });
                     } else {
-                        //TODO: maybe better error
-                        println!("sneep");
-                        Err(TypeCheckError::NoSuchTypeDeclaredInScope {
-                            name: record_name.clone(),
-                            loc: open_curly.loc.clone(),
-                        })
+                        return Err(TypeCheckError::NoSuchMember {
+                            member_name: member_name.to_string(),
+                            name: name.to_string(),
+                            loc: member_identifier.loc.clone(),
+                        });
                     }
                 }
-                ExpressionKind::Accessor {
-                    accessee,
-                    dot,
-                    member_identifier,
-                } => {
-                    let checked_accessee = self.type_check_expression(&accessee)?;
-                    if let TypeKind::Record(name, generic_params, members) =
-                        &checked_accessee.type_kind.clone()
-                    {
+                Err(TypeCheckError::CannotAccessType {
+                    type_kind: checked_accessee.type_kind,
+                    loc: accessee.kind.get_loc().clone(),
+                })
+            }
+            ExpressionKind::SafeAccessor {
+                accessee,
+                question_dot,
+                member_identifier,
+            } => {
+                let checked_accessee = self.type_check_expression(&accessee)?;
+                if let TypeKind::Optional(base_type) = &checked_accessee.type_kind.clone() {
+                    if let TypeKind::Record(name, generic_params, members) = *base_type.clone() {
                         let member_name = &member_identifier.text;
 
                         if let Some(member) = members.iter().find(|m| &m.name == member_name) {
                             return Ok(CheckedExpression {
-                                kind: CheckedExpressionKind::Accessor {
+                                kind: CheckedExpressionKind::SafeAccessor {
                                     accessee: Box::new(checked_accessee),
                                     member: member.name.to_string(),
                                 },
-                                type_kind: member.type_kind.clone(),
-                                loc: dot.loc.clone(),
+                                type_kind: TypeKind::Optional(Box::new(member.type_kind.clone())),
+                                loc: question_dot.loc.clone(),
                             });
                         } else {
                             return Err(TypeCheckError::NoSuchMember {
@@ -1969,65 +2112,135 @@ impl TypeChecker {
                             });
                         }
                     }
-                    Err(TypeCheckError::CannotAccessType {
-                        type_kind: checked_accessee.type_kind,
+                    return Err(TypeCheckError::CannotAccessType {
+                        type_kind: checked_accessee.type_kind.clone(),
                         loc: accessee.kind.get_loc().clone(),
+                    });
+                }
+                Err(TypeCheckError::TypeMismatch {
+                    expected: TypeKind::Optional(Box::new(checked_accessee.type_kind.clone())),
+                    actual: checked_accessee.type_kind.clone(),
+                    loc: accessee.kind.get_loc().clone(),
+                })
+            }
+            ExpressionKind::FunctionParameter { .. } => unreachable!(),
+            ExpressionKind::Range {
+                lower,
+                dotdot: _,
+                upper,
+            } => {
+                let checked_lower = self.type_check_expression(&lower)?;
+
+                if !Self::is_number_type(&checked_lower.type_kind) {
+                    return Err(TypeCheckError::TypeMismatch {
+                        expected: TypeKind::U32,
+                        actual: checked_lower.type_kind,
+                        loc: lower.kind.get_loc().clone(),
+                    });
+                }
+
+                let checked_upper = self.type_check_expression(&upper)?;
+
+                self.expect_type(
+                    checked_lower.type_kind,
+                    checked_upper.type_kind,
+                    upper.kind.get_loc().clone(),
+                )?;
+
+                todo!()
+            }
+            ExpressionKind::StaticAccessor {
+                namespace,
+                colon_colon: _,
+                member,
+            } => match &member.kind {
+                ExpressionKind::Variable { identifier } => {
+                    let checked_member = self.scope.try_get_module_member(
+                        &namespace.text.clone(),
+                        &identifier.text,
+                        &member.kind.get_loc(),
+                    )?;
+                    Ok(CheckedExpression {
+                        kind: CheckedExpressionKind::StaticAccessor {
+                            name: namespace.text.clone(),
+                            member: checked_member.clone(),
+                        },
+                        type_kind: checked_member.type_kind.clone(),
+                        loc: member.kind.get_loc().clone(),
                     })
                 }
-                ExpressionKind::FunctionParameter { .. } => unreachable!(),
-                ExpressionKind::Range {
-                    lower,
-                    dotdot: _,
-                    upper,
-                } => {
-                    let checked_lower = self.type_check_expression(&lower)?;
-
-                    if !Self::is_number_type(&checked_lower.type_kind) {
-                        return Err(TypeCheckError::TypeMismatch {
-                            expected: TypeKind::U32,
-                            actual: checked_lower.type_kind,
-                            loc: lower.kind.get_loc().clone(),
-                        });
-                    }
-
-                    let checked_upper = self.type_check_expression(&upper)?;
-
+                _ => todo!(),
+            },
+            ExpressionKind::MatchCase {
+                pattern,
+                fat_arrow,
+                result,
+            } => todo!(),
+            ExpressionKind::Nil { nil_keyword } => match self.scope.assign_context.last() {
+                Some(type_kind) => match type_kind {
+                    TypeKind::Optional(base_type) => Ok(CheckedExpression {
+                        kind: CheckedExpressionKind::Nil,
+                        type_kind: TypeKind::Optional(Box::new(*base_type.clone())),
+                        loc: nil_keyword.loc.clone(),
+                    }),
+                    _ => Err(TypeCheckError::NonNillableType(
+                        type_kind.clone(),
+                        nil_keyword.loc.clone(),
+                    )),
+                },
+                None => Err(TypeCheckError::CannotDeduceTypeFromContext(
+                    nil_keyword.loc.clone(),
+                )),
+            },
+            ExpressionKind::ForceUnwrap {
+                expression: inner_expression,
+                bang: _,
+            } => {
+                let checked_inner = self.type_check_expression(&inner_expression)?;
+                match &checked_inner.type_kind {
+                    TypeKind::Optional(base_type) => Ok(CheckedExpression {
+                        kind: CheckedExpressionKind::ForceUnwrap {
+                            expression: Box::new(checked_inner.clone()),
+                        },
+                        type_kind: *base_type.clone(),
+                        loc: expression.kind.get_loc().clone(),
+                    }),
+                    _ => Err(TypeCheckError::NonNillableType(
+                        checked_inner.type_kind.clone(),
+                        expression.kind.get_loc().clone(),
+                    )),
+                }
+            }
+            ExpressionKind::NilCoalesce {
+                optional,
+                question_colon: _,
+                default,
+            } => {
+                let checked_optional = self.type_check_expression(&optional)?;
+                if let TypeKind::Optional(base_type) = checked_optional.type_kind.clone() {
+                    let checked_default = self.type_check_expression(&default)?;
                     self.expect_type(
-                        checked_lower.type_kind,
-                        checked_upper.type_kind,
-                        upper.kind.get_loc().clone(),
+                        *base_type.clone(),
+                        checked_default.type_kind.clone(),
+                        default.kind.get_loc(),
                     )?;
 
-                    todo!()
+                    return Ok(CheckedExpression {
+                        kind: CheckedExpressionKind::NilCoalesce {
+                            optional: Box::new(checked_optional),
+                            default: Box::new(checked_default),
+                        },
+                        type_kind: *base_type,
+                        loc: expression.kind.get_loc(),
+                    });
+                } else {
+                    return Err(TypeCheckError::NonNillableType(
+                        checked_optional.type_kind,
+                        optional.kind.get_loc(),
+                    ));
                 }
-                ExpressionKind::StaticAccessor {
-                    namespace,
-                    colon_colon: _,
-                    member,
-                } => match &member.kind {
-                    ExpressionKind::Variable { identifier } => {
-                        let checked_member = self.scope.try_get_module_member(
-                            &namespace.text.clone(),
-                            &identifier.text,
-                            &member.kind.get_loc(),
-                        )?;
-                        Ok(CheckedExpression {
-                            kind: CheckedExpressionKind::StaticAccessor {
-                                name: namespace.text.clone(),
-                                member: checked_member.clone(),
-                            },
-                            type_kind: checked_member.type_kind.clone(),
-                            loc: member.kind.get_loc().clone(),
-                        })
-                    }
-                    _ => todo!(),
-                },
-                ExpressionKind::MatchCase {
-                    pattern,
-                    fat_arrow,
-                    result,
-                } => todo!(),
-            };
+            }
+        };
         return match &checked_expression_result {
             Ok(checked_expression) => {
                 if let Some(TypeKind::GenericParameter(t)) = self.scope.assign_context.last() {

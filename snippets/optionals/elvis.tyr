@@ -1,0 +1,9 @@
+function main() {
+    var x1: ?i32 = nil;
+    var result1 = x1 ?: 42;
+    println(result1);
+
+    var x2: ?i32 = 10;
+    var result2 = x2 ?: 27;
+    println(result2);
+}

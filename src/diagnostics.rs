@@ -339,6 +339,50 @@ pub fn format_typecheck_error(error: &TypeCheckError) -> String {
                 highlight,
             )
         }
+        TypeCheckError::CannotDeduceTypeFromContext(loc) => {
+            let error_line = get_error_line(loc);
+            let highlight = format!(
+                "    |\n{}\n    |{}",
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
+            );
+            format!(
+                "{} cannot deduce type from context, at {}\n{}",
+                log_level,
+                format_location(loc),
+                highlight,
+            )
+        }
+        TypeCheckError::NonNillableType(type_kind, loc) => {
+            let error_line = get_error_line(loc);
+            let highlight = format!(
+                "    |\n{}\n    |{}",
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
+            );
+            format!(
+                "{} `{}` is a non-nillable type, at {}\n{}",
+                log_level,
+                type_kind,
+                format_location(loc),
+                highlight,
+            )
+        }
+        TypeCheckError::CannotPassOptionalTypeToFunction { type_kind, loc } => {
+            let error_line = get_error_line(loc);
+            let highlight = format!(
+                "    |\n{}\n    |{}",
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
+            );
+            format!(
+                "{} cannot print optional type `{}`, at {}\n{}",
+                log_level,
+                type_kind,
+                format_location(loc),
+                highlight,
+            )
+        }
     }
 }
 

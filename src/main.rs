@@ -85,7 +85,7 @@ fn main() {
                         loc.col + 1
                     )
                 }
-                ParseError::CannotStaticallyAccess(expression) => todo!(),
+                ParseError::CannotStaticallyAccess(..) => todo!(),
             }
             return;
         }
