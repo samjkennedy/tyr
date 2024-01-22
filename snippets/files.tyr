@@ -1,8 +1,9 @@
 function main() {
-    var f: file = file_open("snippets/files.tyr", "r");
+    var f: file = file_open("snippets/files.tyr", "r")!;
 
+    var eof: i8 = -1;
     var c = f.read_char();
-    while c != -1 {
+    while c != eof {
         print(c);
         c = f.read_char();
     }

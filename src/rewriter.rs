@@ -298,6 +298,18 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
                 loc: expression.loc,
             })
         }
+        CheckedExpressionKind::SafeAccessor { accessee, member } => {
+            let rewritten_accessee = rewrite_expression(*accessee)?;
+
+            Ok(CheckedExpression {
+                kind: CheckedExpressionKind::SafeAccessor {
+                    accessee: Box::new(rewritten_accessee),
+                    member,
+                },
+                type_kind: expression.type_kind,
+                loc: expression.loc,
+            })
+        }
         CheckedExpressionKind::StaticAccessor { name, member } => Ok(CheckedExpression {
             kind: CheckedExpressionKind::StaticAccessor { name, member },
             type_kind: expression.type_kind,
@@ -314,6 +326,27 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
                 },
                 type_kind: expression.type_kind,
                 loc: expression.loc,
+            })
+        }
+        CheckedExpressionKind::Nil => Ok(expression),
+        CheckedExpressionKind::ForceUnwrap { expression } => Ok(CheckedExpression {
+            kind: CheckedExpressionKind::ForceUnwrap {
+                expression: Box::new(rewrite_expression(*expression.clone())?),
+            },
+            type_kind: expression.type_kind.clone(),
+            loc: expression.loc.clone(),
+        }),
+        CheckedExpressionKind::NilCoalesce { optional, default } => {
+            let rewritten_optional = rewrite_expression(*optional)?;
+            let rewritten_default = rewrite_expression(*default)?;
+
+            Ok(CheckedExpression {
+                kind: CheckedExpressionKind::NilCoalesce {
+                    optional: Box::new(rewritten_optional),
+                    default: Box::new(rewritten_default),
+                },
+                type_kind: expression.type_kind.clone(),
+                loc: expression.loc.clone(),
             })
         }
     };

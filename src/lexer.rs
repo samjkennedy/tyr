@@ -37,6 +37,7 @@ pub enum TokenKind {
     CloseAngleEquals,
     OpenSquare,
     CloseSquare,
+    Bang,
     BangEquals,
     AndKeyword,
     OrKeyword,
@@ -65,6 +66,10 @@ pub enum TokenKind {
     ColonColon,
     MatchKeyword,
     FatArrow,
+    QuestionMark,
+    NilKeyword,
+    QuestionDot,
+    QuestionColon,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -393,6 +398,26 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
 
                     col += advance_by;
                 }
+                '?' => {
+                    let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
+                        Some(next_char) if next_char == '.' => (TokenKind::QuestionDot, "?.", 2),
+                        Some(next_char) if next_char == ':' => (TokenKind::QuestionColon, "?:", 2),
+                        _ => (TokenKind::QuestionMark, "?", 1),
+                    };
+
+                    tokens.push(Token::new(
+                        token_kind,
+                        text.to_owned(),
+                        Loc {
+                            file: file_path.to_string_lossy().into_owned(),
+                            row,
+                            col,
+                            len: advance_by,
+                        },
+                    ));
+
+                    col += advance_by;
+                }
                 '{' => {
                     tokens.push(Token::new(
                         TokenKind::OpenCurly,
@@ -463,7 +488,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 '!' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
                         Some(next_char) if next_char == '=' => (TokenKind::BangEquals, "!=", 2),
-                        _ => todo!(), //(TokenKind::OpenAngleEquals, "<", 1),
+                        _ => (TokenKind::Bang, "!", 1),
                     };
 
                     tokens.push(Token::new(
@@ -572,6 +597,7 @@ fn match_keyword(identifier: &String) -> Option<TokenKind> {
         "with" => Some(TokenKind::WithKeyword),
         "enum" => Some(TokenKind::EnumKeyword),
         "match" => Some(TokenKind::MatchKeyword),
+        "nil" => Some(TokenKind::NilKeyword),
         _ => None,
     };
 }
