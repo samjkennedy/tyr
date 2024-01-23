@@ -279,6 +279,21 @@ pub fn format_typecheck_error(error: &TypeCheckError) -> String {
                 highlight,
             )
         }
+        TypeCheckError::CannotIterateType { type_kind, loc } => {
+            let error_line = get_error_line(loc);
+            let highlight = format!(
+                "    |\n{}\n    |{}",
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
+            );
+            format!(
+                "{} type `{}` cannot be iterated at {}\n{}",
+                log_level,
+                type_kind,
+                format_location(loc),
+                highlight,
+            )
+        }
         TypeCheckError::NoSuchMember {
             member_name,
             name,

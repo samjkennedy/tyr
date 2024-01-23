@@ -3,4 +3,9 @@ function main() {
     for i in 0..upper {
         println(i);
     }
+    println("");
+    var array: [5]i32 = [5]i32 {1, 2, 3, 4, 5};
+    for i in array {
+        println(i);
+    }
 }

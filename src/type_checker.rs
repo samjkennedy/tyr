@@ -185,6 +185,10 @@ pub enum TypeCheckError {
     NoSuchNamespaceDeclaredInScope {
         namespace: Token,
     },
+    CannotIterateType {
+        type_kind: TypeKind,
+        loc: Loc,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1286,8 +1290,29 @@ impl TypeChecker {
                             },
                         })
                     }
+                    TypeKind::Array(_, inner_type) => {
+                        let checked_iterator = CheckedVariable {
+                            name: iterator.text.clone(),
+                            type_kind: *inner_type.clone(),
+                            declaration_loc: iterator.loc.clone(),
+                        };
+                        self.scope
+                            .try_declare_variable(checked_iterator.clone(), iterator.loc.clone())?;
 
-                    _ => todo!("cannot iterate type {}", checked_iterable.type_kind),
+                        let checked_body = self.type_check_statement(&body)?;
+
+                        Ok(CheckedStatement {
+                            kind: CheckedStatementKind::ForIn {
+                                iterator: checked_iterator,
+                                iterable: checked_iterable,
+                                body: Box::new(checked_body),
+                            },
+                        })
+                    }
+                    _ => Err(TypeCheckError::CannotIterateType {
+                        type_kind: checked_iterable.type_kind,
+                        loc: checked_iterable.loc,
+                    }),
                 }
             }
         }

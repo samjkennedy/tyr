@@ -38,8 +38,8 @@ function main() {
     var out_file: file = f!;
 
     for it in 0..n_iters {
-        for i in 0..size {
-            if state[i] == 1 {
+        for s in state {
+            if s == 1 {
                 out_file.write("#");
             } else {
                 out_file.write(" ");
