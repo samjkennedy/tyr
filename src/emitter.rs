@@ -182,6 +182,11 @@ impl CEmitter {
                 }
                 TypeKind::Optional(base_type) => match **base_type {
                     TypeKind::File => {
+                        write!(self.out_file, "{} {} = ", Self::get_c_type(type_kind), name)?;
+                        self.emit_expression(initialiser)?;
+                        writeln!(self.out_file, ";")?;
+                    }
+                    _ => {
                         write!(
                             self.out_file,
                             "{} optional_{} = ",
@@ -197,11 +202,6 @@ impl CEmitter {
                             name,
                             name
                         )?;
-                    }
-                    _ => {
-                        write!(self.out_file, "{} {} = ", Self::get_c_type(type_kind), name)?;
-                        self.emit_expression(initialiser)?;
-                        writeln!(self.out_file, ";")?;
                     }
                 },
                 _ => {
@@ -321,6 +321,7 @@ impl CEmitter {
                 self.emit_statement(&cases)?;
                 writeln!(self.out_file, "}}")?;
             }
+            CheckedStatementKind::NoOp => {}
         }
         Ok(())
     }
@@ -425,7 +426,7 @@ impl CEmitter {
                     write!(self.out_file, ")")?;
                     return Ok(());
                 }
-                if name == "file_open" {
+                if name == "open_file" {
                     write!(self.out_file, "fopen(")?;
                     self.emit_expression(&args[0])?;
                     write!(self.out_file, ", ")?;
@@ -437,6 +438,22 @@ impl CEmitter {
                     write!(self.out_file, "fgetc(")?;
                     self.emit_expression(&args[0])?;
                     write!(self.out_file, ")")?;
+                    return Ok(());
+                }
+                if name == "write" {
+                    write!(self.out_file, "fputs(")?;
+                    self.emit_expression(&args[1])?;
+                    write!(self.out_file, ", ")?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, ")")?;
+                    return Ok(());
+                }
+                if name == "eof" {
+                    write!(self.out_file, "ungetc(getc(")?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, "), ")?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, ") == -1")?;
                     return Ok(());
                 }
                 if name == "close" {
@@ -585,7 +602,10 @@ impl CEmitter {
             TypeKind::Range(_, _) => todo!(),
             TypeKind::GenericParameter(name) => name.to_string(),
             TypeKind::File => "FILE *".to_string(),
-            TypeKind::Optional(base_type) => format!("{} *", Self::get_c_type(base_type)),
+            TypeKind::Optional(base_type) => match **base_type {
+                TypeKind::File => format!("{} ", Self::get_c_type(base_type)),
+                _ => format!("{} *", Self::get_c_type(base_type)),
+            },
         };
     }
 

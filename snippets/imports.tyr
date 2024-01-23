@@ -1,0 +1,10 @@
+import std::math;
+
+function main() {
+    var v = math::v2f {
+        3.5, 4.6
+    };
+
+    var mag = math::mag2f(v);
+    println(mag);
+} 

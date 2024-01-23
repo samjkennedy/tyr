@@ -70,6 +70,7 @@ pub enum TokenKind {
     NilKeyword,
     QuestionDot,
     QuestionColon,
+    ImportKeyword,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -598,6 +599,7 @@ fn match_keyword(identifier: &String) -> Option<TokenKind> {
         "enum" => Some(TokenKind::EnumKeyword),
         "match" => Some(TokenKind::MatchKeyword),
         "nil" => Some(TokenKind::NilKeyword),
+        "import" => Some(TokenKind::ImportKeyword),
         _ => None,
     };
 }

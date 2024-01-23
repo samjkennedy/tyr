@@ -151,6 +151,9 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
                 },
             })
         }
+        CheckedStatementKind::NoOp => Ok(CheckedStatement {
+            kind: CheckedStatementKind::NoOp,
+        }),
     }
 }
 

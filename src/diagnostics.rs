@@ -147,6 +147,21 @@ pub fn format_typecheck_error(error: &TypeCheckError) -> String {
                 highlight,
             )
         }
+        TypeCheckError::NoSuchNamespaceDeclaredInScope { namespace } => {
+            let loc = &namespace.loc;
+            let error_line = get_error_line(loc);
+            let highlight = format!(
+                "    |\n{}\n    |{}",
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
+            );
+            format!(
+                "No such namespace `{}` declared in scope at {}\n{}",
+                namespace.text,
+                format_location(loc),
+                highlight,
+            )
+        }
         TypeCheckError::FunctionAlreadyDeclared { function, loc } => {
             let error_line = get_error_line(loc);
             let highlight = format!(

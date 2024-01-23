@@ -71,6 +71,10 @@ pub enum StatementKind {
     },
     Break,
     Continue,
+    Import {
+        import_keyword: Token,
+        path: Vec<Token>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -212,7 +216,7 @@ impl Location for ExpressionKind {
                 span_locs(&left.kind.get_loc(), &right.kind.get_loc())
             }
             ExpressionKind::Unary { op, operand } => span_locs(&op.loc, &operand.kind.get_loc()),
-            ExpressionKind::Parenthesised { expression } => todo!(),
+            ExpressionKind::Parenthesised { expression } => expression.kind.get_loc(),
             ExpressionKind::Variable { identifier } => identifier.loc.clone(),
             ExpressionKind::TypeAnnotation {
                 colon,
@@ -226,7 +230,9 @@ impl Location for ExpressionKind {
             } => {
                 return span_locs(&callee.kind.get_loc(), &close_paren.loc);
             }
-            ExpressionKind::ArrayIndex { array, index } => todo!(),
+            ExpressionKind::ArrayIndex { array, index } => {
+                return span_locs(&array.kind.get_loc(), &index.kind.get_loc());
+            }
             ExpressionKind::RecordLiteral {
                 record_identifier,
                 open_curly,
@@ -714,6 +720,28 @@ impl Parser {
                     },
                     loc,
                 })
+            }
+            TokenKind::ImportKeyword => {
+                todo!("Need to design imports properly and memory efficiently")
+                // let import_keyword = Self::expect_token(tokens, TokenKind::ImportKeyword)?;
+
+                // let mut path = Vec::new();
+                // path.push(Self::expect_token(tokens, TokenKind::Identifier)?);
+
+                // while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::Semicolon
+                // {
+                //     Self::expect_token(tokens, TokenKind::ColonColon)?;
+                //     path.push(Self::expect_token(tokens, TokenKind::Identifier)?);
+                // }
+                // let semicolon = Self::expect_token(tokens, TokenKind::Semicolon)?;
+
+                // Ok(Statement {
+                //     kind: StatementKind::Import {
+                //         import_keyword: import_keyword.clone(),
+                //         path,
+                //     },
+                //     loc: span_locs(&import_keyword.loc, &semicolon.loc),
+                // })
             }
             _ => {
                 let expression = self.parse_binary_expression(tokens, 0)?;

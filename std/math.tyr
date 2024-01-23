@@ -1,3 +1,14 @@
+record v2f {
+    x: f32,
+    y: f32,
+}
+
+record v3f {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
 function sqrt(n: f32): f32 {
     var start: f32 = 0.0;
     var end: f32 = 0.0;
@@ -6,7 +17,7 @@ function sqrt(n: f32): f32 {
     var ans: f32 = 0.0;
     
     while start <= end {
-		mid = 0.0 + (start + end / 2);
+        mid = 0.0 + (start + end / 2);
 
         if (mid * mid == n) {
             ans = mid;
@@ -17,7 +28,7 @@ function sqrt(n: f32): f32 {
             ans = 0.0 + start;
             start = mid + 1.0;
         }
- 
+
         else {
             end = mid - 1.0;
         }
@@ -29,7 +40,7 @@ function sqrt(n: f32): f32 {
         while (ans * ans <= n) {
             ans = ans + increment;
         }
- 
+
         ans = ans - increment;
         increment = increment / 10.0;
         i = i + 1;
@@ -37,20 +48,7 @@ function sqrt(n: f32): f32 {
     return ans;  
 }
 
-record Vector {
-    x: f32,
-    y: f32
-}
-
-function mag(v: Vector): f32 {
+function mag2f(v: v2f): f32 {
     return sqrt(v.x * v.x + v.y * v.y);
 }
 
-function main() {
-    var v1 = Vector { 3.0, 4.0 };
-    var v2 = Vector { 6.0, 8.0 };
-
-    println(mag(v1));
-    println(mag(v2));
-    println(mag(Vector { 1.0, 1.0 }));
-}
