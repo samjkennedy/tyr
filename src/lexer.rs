@@ -56,6 +56,8 @@ pub enum TokenKind {
     IfKeyword,
     ElseKeyword,
     WhileKeyword,
+    ForKeyword,
+    InKeyword,
     RecordKeyword,
     Dot,
     DotDot,
@@ -79,6 +81,16 @@ pub struct Loc {
     pub row: usize,
     pub col: usize,
     pub len: usize,
+}
+impl Loc {
+    pub fn null() -> Loc {
+        return Loc {
+            file: "".to_string(),
+            row: 0,
+            col: 0,
+            len: 0,
+        };
+    }
 }
 
 pub fn span_locs(start: &Loc, end: &Loc) -> Loc {
@@ -600,6 +612,8 @@ fn match_keyword(identifier: &String) -> Option<TokenKind> {
         "match" => Some(TokenKind::MatchKeyword),
         "nil" => Some(TokenKind::NilKeyword),
         "import" => Some(TokenKind::ImportKeyword),
+        "for" => Some(TokenKind::ForKeyword),
+        "in" => Some(TokenKind::InKeyword),
         _ => None,
     };
 }

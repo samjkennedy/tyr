@@ -322,6 +322,11 @@ impl CEmitter {
                 writeln!(self.out_file, "}}")?;
             }
             CheckedStatementKind::NoOp => {}
+            CheckedStatementKind::ForIn {
+                iterator,
+                iterable,
+                body,
+            } => unreachable!("Should have been rewritten to a while loop"),
         }
         Ok(())
     }
@@ -559,6 +564,7 @@ impl CEmitter {
                 self.emit_expression(&optional)?;
                 Ok(())
             }
+            CheckedExpressionKind::Range { lower, upper } => todo!(),
         }
     }
 
@@ -599,7 +605,7 @@ impl CEmitter {
                 format!("{}* ", Self::get_c_type(el_type))
             }
             TypeKind::String => "char*".to_string(),
-            TypeKind::Range(_, _) => todo!(),
+            TypeKind::Range(_) => todo!(),
             TypeKind::GenericParameter(name) => name.to_string(),
             TypeKind::File => "FILE *".to_string(),
             TypeKind::Optional(base_type) => match **base_type {
@@ -634,7 +640,7 @@ impl CEmitter {
                 format!("{} *{}", Self::get_c_type(el_type), param_name)
             }
             TypeKind::String => format!("char* {}", param_name),
-            TypeKind::Range(_, _) => todo!(),
+            TypeKind::Range(_) => todo!(),
             TypeKind::GenericParameter(_) => todo!(),
             TypeKind::File => "FILE *".to_string(),
             TypeKind::Optional(base_type) => {
@@ -663,7 +669,7 @@ impl CEmitter {
             TypeKind::F32 => "%.2f".to_string(),
             TypeKind::F64 => "%.6lf".to_string(),
             TypeKind::String => "%s".to_string(),
-            TypeKind::Range(_, _) => todo!(),
+            TypeKind::Range(_) => todo!(),
             TypeKind::GenericParameter(_) => todo!(),
             TypeKind::File => "%zu".to_string(),
             TypeKind::Optional(base_type) => Self::get_print_format_for_type(&base_type),

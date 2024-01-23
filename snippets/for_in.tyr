@@ -1,0 +1,6 @@
+function main() {
+    var upper = 15;
+    for i in 0..upper {
+        println(i);
+    }
+}

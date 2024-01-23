@@ -1,6 +1,7 @@
 use core::{fmt, panic};
 use std::{
     collections::HashMap,
+    iter,
     ops::Index,
     path::{Path, PathBuf},
 };
@@ -32,7 +33,7 @@ pub enum TypeKind {
     Array(usize, Box<TypeKind>),
     Slice(Box<TypeKind>),
     Record(String, Vec<TypeKind>, Vec<CheckedVariable>),
-    Range(Box<TypeKind>, Box<TypeKind>),
+    Range(Box<TypeKind>),
     Enum(String, Vec<String>),
     GenericParameter(String),
     Optional(Box<TypeKind>),
@@ -80,8 +81,8 @@ impl fmt::Display for TypeKind {
                     )
                 }
             }
-            TypeKind::Range(lower, upper) => {
-                write!(f, "range<{}, {}>", lower, upper)
+            TypeKind::Range(inner_type) => {
+                write!(f, "range<{}>", inner_type)
             }
             TypeKind::Enum(name, _) => write!(f, "{}", name),
             TypeKind::GenericParameter(name) => write!(f, "{}", name),
@@ -236,6 +237,11 @@ pub enum CheckedStatementKind {
         cases: Box<CheckedStatement>,
     },
     NoOp,
+    ForIn {
+        iterator: CheckedVariable,
+        iterable: CheckedExpression,
+        body: Box<CheckedStatement>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -337,6 +343,10 @@ pub enum CheckedExpressionKind {
     Nil,
     ForceUnwrap {
         expression: Box<CheckedExpression>,
+    },
+    Range {
+        lower: Box<CheckedExpression>,
+        upper: Box<CheckedExpression>,
     },
 }
 
@@ -1242,6 +1252,43 @@ impl TypeChecker {
                 Ok(CheckedStatement {
                     kind: CheckedStatementKind::NoOp,
                 })
+            }
+            StatementKind::ForIn {
+                for_keyword: _,
+                iterator,
+                in_keyword: is_digit,
+                iterable,
+                body,
+            } => {
+                let checked_iterable = self.type_check_expression(iterable)?;
+
+                //todo: too much cloning here
+                let outer_scope = self.scope.clone();
+                self.scope = Scope::new_inner_scope(outer_scope.clone());
+
+                match &checked_iterable.type_kind {
+                    TypeKind::Range(range_type) => {
+                        let checked_iterator = CheckedVariable {
+                            name: iterator.text.clone(),
+                            type_kind: *range_type.clone(),
+                            declaration_loc: iterator.loc.clone(),
+                        };
+                        self.scope
+                            .try_declare_variable(checked_iterator.clone(), iterator.loc.clone())?;
+
+                        let checked_body = self.type_check_statement(&body)?;
+
+                        Ok(CheckedStatement {
+                            kind: CheckedStatementKind::ForIn {
+                                iterator: checked_iterator,
+                                iterable: checked_iterable,
+                                body: Box::new(checked_body),
+                            },
+                        })
+                    }
+
+                    _ => todo!("cannot iterate type {}", checked_iterable.type_kind),
+                }
             }
         }
     }
@@ -2293,12 +2340,19 @@ impl TypeChecker {
                 let checked_upper = self.type_check_expression(&upper)?;
 
                 self.expect_type(
-                    checked_lower.type_kind,
-                    checked_upper.type_kind,
+                    checked_lower.type_kind.clone(),
+                    checked_upper.type_kind.clone(),
                     upper.kind.get_loc().clone(),
                 )?;
 
-                todo!()
+                Ok(CheckedExpression {
+                    type_kind: TypeKind::Range(Box::new(checked_lower.type_kind.clone())),
+                    kind: CheckedExpressionKind::Range {
+                        lower: Box::new(checked_lower),
+                        upper: Box::new(checked_upper),
+                    },
+                    loc: span_locs(&lower.kind.get_loc(), &upper.kind.get_loc()),
+                })
             }
             ExpressionKind::StaticAccessor {
                 namespace,
@@ -2592,6 +2646,11 @@ impl TypeChecker {
             | CheckedStatementKind::MatchCases { .. }
             | CheckedStatementKind::Match { .. }
             | CheckedStatementKind::NoOp => false,
+            CheckedStatementKind::ForIn {
+                iterator: _,
+                iterable: _,
+                body,
+            } => Self::all_paths_return_value(&body),
         }
     }
 

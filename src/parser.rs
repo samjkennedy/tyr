@@ -6,7 +6,6 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Statement {
     pub kind: StatementKind,
-    pub loc: Loc,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +73,13 @@ pub enum StatementKind {
     Import {
         import_keyword: Token,
         path: Vec<Token>,
+    },
+    ForIn {
+        for_keyword: Token,
+        iterator: Token,
+        in_keyword: Token,
+        iterable: Expression,
+        body: Box<Statement>,
     },
 }
 
@@ -456,7 +462,6 @@ impl Parser {
                             initialiser,
                             semicolon,
                         },
-                        loc,
                     });
                 } else {
                     Err(ParseError::UnexpectedEOF)
@@ -524,7 +529,6 @@ impl Parser {
                         return_annotation,
                         body: Box::new(body),
                     },
-                    loc,
                 })
             }
             TokenKind::OpenCurly => self.parse_block_statement(tokens),
@@ -555,7 +559,6 @@ impl Parser {
                         body: Box::new(body),
                         else_body: else_body.map(|e| Box::new(e)),
                     },
-                    loc,
                 })
             }
             TokenKind::WhileKeyword => {
@@ -573,12 +576,29 @@ impl Parser {
                         condition,
                         body: Box::new(body),
                     },
-                    loc,
+                })
+            }
+            TokenKind::ForKeyword => {
+                let for_keyword = Self::expect_token(tokens, TokenKind::ForKeyword)?;
+                let iterator = Self::expect_token(tokens, TokenKind::Identifier)?;
+                let in_keyword = Self::expect_token(tokens, TokenKind::InKeyword)?;
+
+                let iterable = self.parse_binary_expression(tokens, 0)?;
+
+                let body = self.parse_statement(tokens)?;
+
+                Ok(Statement {
+                    kind: StatementKind::ForIn {
+                        for_keyword,
+                        iterator,
+                        in_keyword,
+                        iterable,
+                        body: Box::new(body),
+                    },
                 })
             }
             TokenKind::ReturnKeyword => {
                 let return_keyword = Self::expect_token(tokens, TokenKind::ReturnKeyword)?;
-                let loc = return_keyword.loc.clone();
 
                 self.allow_record_literals.push(true);
                 let return_value: Option<Expression> = match tokens.peek() {
@@ -597,13 +617,10 @@ impl Parser {
                         return_keyword,
                         return_value,
                     },
-                    loc,
                 })
             }
             TokenKind::RecordKeyword => {
                 let record_keyword = Self::expect_token(tokens, TokenKind::RecordKeyword)?;
-                let loc = record_keyword.loc.clone();
-
                 let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
 
                 let mut generic_type_parameters: Vec<Token> = Vec::new();
@@ -653,7 +670,6 @@ impl Parser {
                         generic_type_parameters,
                         members,
                     },
-                    loc,
                 })
             }
             TokenKind::BreakKeyword => {
@@ -662,7 +678,6 @@ impl Parser {
                 Self::expect_token(tokens, TokenKind::Semicolon)?;
                 Ok(Statement {
                     kind: StatementKind::Break,
-                    loc,
                 })
             }
             TokenKind::ContinueKeyword => {
@@ -671,7 +686,6 @@ impl Parser {
                 Self::expect_token(tokens, TokenKind::Semicolon)?;
                 Ok(Statement {
                     kind: StatementKind::Continue,
-                    loc,
                 })
             }
             TokenKind::EnumKeyword => {
@@ -702,12 +716,10 @@ impl Parser {
                         identifier,
                         variants,
                     },
-                    loc,
                 })
             }
             TokenKind::MatchKeyword => {
                 let match_keyword = Self::expect_token(tokens, TokenKind::MatchKeyword)?;
-                let loc = match_keyword.loc.clone();
                 let expression = self.parse_binary_expression(tokens, 0)?;
 
                 let cases = self.parse_match_cases(tokens)?;
@@ -718,7 +730,6 @@ impl Parser {
                         expression,
                         cases: Box::new(cases),
                     },
-                    loc,
                 })
             }
             TokenKind::ImportKeyword => {
@@ -754,7 +765,6 @@ impl Parser {
                         expression,
                         semicolon,
                     },
-                    loc,
                 })
             }
         }
@@ -780,7 +790,6 @@ impl Parser {
 
         Ok(Statement {
             kind: StatementKind::Block { statements },
-            loc: open_curly_loc,
         })
     }
 
@@ -1285,7 +1294,7 @@ impl Parser {
         &mut self,
         tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
     ) -> Result<Statement, ParseError> {
-        let open_curly = Self::expect_token(tokens, TokenKind::OpenCurly)?;
+        Self::expect_token(tokens, TokenKind::OpenCurly)?;
 
         let mut cases: Vec<Expression> = Vec::new();
         while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
@@ -1309,7 +1318,6 @@ impl Parser {
 
         Ok(Statement {
             kind: StatementKind::MatchCases { cases },
-            loc: span_locs(&open_curly.loc, &close_curly.loc),
         })
     }
 

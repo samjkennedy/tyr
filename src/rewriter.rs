@@ -1,5 +1,9 @@
-use crate::type_checker::{
-    CheckedExpression, CheckedExpressionKind, CheckedStatement, CheckedStatementKind,
+use crate::{
+    lexer::Loc,
+    parser::BinaryOpKind,
+    type_checker::{
+        CheckedExpression, CheckedExpressionKind, CheckedStatement, CheckedStatementKind, TypeKind,
+    },
 };
 
 pub enum RewriterError {}
@@ -154,6 +158,123 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
         CheckedStatementKind::NoOp => Ok(CheckedStatement {
             kind: CheckedStatementKind::NoOp,
         }),
+        CheckedStatementKind::ForIn {
+            iterator,
+            iterable,
+            body,
+        } => {
+            let mut statements: Vec<CheckedStatement> = Vec::new();
+
+            match iterable.type_kind {
+                TypeKind::Range(inner_type) => {
+                    if let CheckedExpressionKind::Range { lower, upper } = iterable.kind {
+                        //Need to rewrite this into a while loop...
+                        /*
+                           for x in 0..10 { body }
+
+                           becomes
+
+                           var x = 0;
+                           while x < 10 {
+                               body;
+                               x = x + 1;
+                           }
+                        */
+
+                        //var x = 0;
+                        let declare_iterator = CheckedStatement {
+                            kind: CheckedStatementKind::VariableDeclaration {
+                                name: iterator.name.clone(),
+                                type_kind: *inner_type,
+                                initialiser: *lower,
+                            },
+                        };
+                        statements.push(declare_iterator);
+
+                        /*
+                        {
+                            body;
+                            x = x + 1;
+                        }
+                        */
+                        let mut rewritten_body: Vec<CheckedStatement> = Vec::new();
+                        rewritten_body.push(*body);
+                        let increment = CheckedExpression {
+                            kind: CheckedExpressionKind::Binary {
+                                left: Box::new(CheckedExpression {
+                                    kind: CheckedExpressionKind::Variable {
+                                        variable: iterator.clone(),
+                                    },
+                                    type_kind: iterator.type_kind.clone(),
+                                    loc: Loc::null(),
+                                }),
+                                op: BinaryOpKind::Add,
+                                right: Box::new(CheckedExpression {
+                                    kind: CheckedExpressionKind::I32Literal { value: 1 },
+                                    type_kind: iterator.type_kind.clone(),
+                                    loc: Loc::null(),
+                                }),
+                            },
+                            type_kind: iterator.type_kind.clone(),
+                            loc: Loc::null(),
+                        };
+                        let assignment = CheckedExpression {
+                            kind: CheckedExpressionKind::Assignment {
+                                lhs: Box::new(CheckedExpression {
+                                    kind: CheckedExpressionKind::Variable {
+                                        variable: iterator.clone(),
+                                    },
+                                    type_kind: iterator.type_kind.clone(),
+                                    loc: Loc::null(),
+                                }),
+                                rhs: Box::new(increment),
+                            },
+                            type_kind: TypeKind::Unit,
+                            loc: Loc::null(),
+                        };
+                        rewritten_body.push(CheckedStatement {
+                            kind: CheckedStatementKind::Expression {
+                                expression: assignment,
+                            },
+                        });
+
+                        //while x < 10
+                        let while_loop = CheckedStatement {
+                            kind: CheckedStatementKind::While {
+                                condition: CheckedExpression {
+                                    kind: CheckedExpressionKind::Binary {
+                                        left: Box::new(CheckedExpression {
+                                            kind: CheckedExpressionKind::Variable {
+                                                variable: iterator.clone(),
+                                            },
+                                            type_kind: iterator.type_kind.clone(),
+                                            loc: Loc::null(),
+                                        }),
+                                        op: BinaryOpKind::Lt,
+                                        right: upper,
+                                    },
+                                    type_kind: TypeKind::Bool,
+                                    loc: Loc::null(),
+                                },
+                                body: Box::new(CheckedStatement {
+                                    kind: CheckedStatementKind::Block {
+                                        statements: rewritten_body,
+                                    },
+                                }),
+                            },
+                        };
+                        statements.push(while_loop);
+
+                        self::rewrite_statement(CheckedStatement {
+                            kind: CheckedStatementKind::Block { statements },
+                        })
+                    } else {
+                        unreachable!()
+                    }
+                }
+                _ => todo!("other iterable types"),
+            }
+        }
     }
 }
 
@@ -347,6 +468,19 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
                 kind: CheckedExpressionKind::NilCoalesce {
                     optional: Box::new(rewritten_optional),
                     default: Box::new(rewritten_default),
+                },
+                type_kind: expression.type_kind.clone(),
+                loc: expression.loc.clone(),
+            })
+        }
+        CheckedExpressionKind::Range { lower, upper } => {
+            let rewritten_lower = rewrite_expression(*lower)?;
+            let rewritten_upper = rewrite_expression(*upper)?;
+
+            Ok(CheckedExpression {
+                kind: CheckedExpressionKind::Range {
+                    lower: Box::new(rewritten_lower),
+                    upper: Box::new(rewritten_upper),
                 },
                 type_kind: expression.type_kind.clone(),
                 loc: expression.loc.clone(),
