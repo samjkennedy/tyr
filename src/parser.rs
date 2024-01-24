@@ -1,6 +1,5 @@
 use crate::{
     lexer::{span_locs, Loc, Token, TokenKind},
-    type_checker::{CheckedExpression, CheckedStatement},
 };
 
 #[derive(Debug, Clone)]
@@ -206,61 +205,61 @@ impl Location for ExpressionKind {
             | ExpressionKind::StringLiteral { token } => token.loc.clone(),
             ExpressionKind::ArrayLiteral {
                 array_type_expression_kind,
-                open_curly,
-                elements,
+                open_curly: _,
+                elements: _,
                 close_curly,
-            } => return span_locs(&array_type_expression_kind.get_loc(), &close_curly.loc),
-            ExpressionKind::Assignment { lhs, equals, rhs } => {
-                return span_locs(&lhs.kind.get_loc(), &rhs.kind.get_loc());
+            } => span_locs(&array_type_expression_kind.get_loc(), &close_curly.loc),
+            ExpressionKind::Assignment { lhs, equals: _, rhs } => {
+                span_locs(&lhs.kind.get_loc(), &rhs.kind.get_loc())
             }
             ExpressionKind::FunctionParameter {
-                modifiers,
-                identifier,
-                type_annotation,
+                modifiers: _,
+                identifier: _,
+                type_annotation: _,
             } => todo!(),
-            ExpressionKind::Binary { left, op, right } => {
+            ExpressionKind::Binary { left, op: _, right } => {
                 span_locs(&left.kind.get_loc(), &right.kind.get_loc())
             }
             ExpressionKind::Unary { op, operand } => span_locs(&op.loc, &operand.kind.get_loc()),
             ExpressionKind::Parenthesised { expression } => expression.kind.get_loc(),
             ExpressionKind::Variable { identifier } => identifier.loc.clone(),
             ExpressionKind::TypeAnnotation {
-                colon,
-                type_expression_kind,
+                colon: _,
+                type_expression_kind: _,
             } => todo!(),
             ExpressionKind::FunctionCall {
                 callee,
-                open_paren,
-                args,
+                open_paren: _,
+                args: _,
                 close_paren,
             } => {
-                return span_locs(&callee.kind.get_loc(), &close_paren.loc);
+                span_locs(&callee.kind.get_loc(), &close_paren.loc)
             }
             ExpressionKind::ArrayIndex { array, index } => {
-                return span_locs(&array.kind.get_loc(), &index.kind.get_loc());
+                span_locs(&array.kind.get_loc(), &index.kind.get_loc())
             }
             ExpressionKind::RecordLiteral {
                 record_identifier,
-                open_curly,
-                args,
+                open_curly: _,
+                args: _,
                 close_curly,
             } => span_locs(&record_identifier.loc, &close_curly.loc),
             ExpressionKind::Accessor {
                 accessee,
-                dot,
+                dot: _,
                 member_identifier,
             } => {
-                return span_locs(&accessee.kind.get_loc(), &member_identifier.loc);
+                span_locs(&accessee.kind.get_loc(), &member_identifier.loc)
             }
             ExpressionKind::SafeAccessor {
                 accessee,
                 question_dot: _,
                 member_identifier,
-            } => return span_locs(&accessee.kind.get_loc(), &member_identifier.loc),
+            } => span_locs(&accessee.kind.get_loc(), &member_identifier.loc),
             ExpressionKind::Range {
-                lower,
-                dotdot,
-                upper,
+                lower: _,
+                dotdot: _,
+                upper: _,
             } => todo!(),
             ExpressionKind::StaticAccessor {
                 namespace,
@@ -278,7 +277,7 @@ impl Location for ExpressionKind {
             }
             ExpressionKind::NilCoalesce {
                 optional,
-                question_colon,
+                question_colon: _,
                 default,
             } => span_locs(&optional.kind.get_loc(), &default.kind.get_loc()),
         }
@@ -327,22 +326,22 @@ impl Location for TypeExpressionKind {
             TypeExpressionKind::Basic { identifier } => identifier.loc.clone(),
             TypeExpressionKind::Array {
                 open_square,
-                length,
-                close_square,
+                length: _,
+                close_square: _,
                 element_type,
             } => span_locs(&open_square.loc, &element_type.get_loc()),
             TypeExpressionKind::Slice {
-                open_square,
-                close_square,
-                element_type,
+                open_square: _,
+                close_square: _,
+                element_type: _,
             } => todo!(),
             TypeExpressionKind::Generic {
                 generic_type,
-                open_angle,
-                generic_parameter_types,
+                open_angle: _,
+                generic_parameter_types: _,
                 close_angle,
             } => span_locs(&generic_type.get_loc(), &close_angle.loc),
-            TypeExpressionKind::GenericParameter { type_name, param } => param.loc.clone(),
+            TypeExpressionKind::GenericParameter { type_name: _, param } => param.loc.clone(),
             TypeExpressionKind::Optional {
                 question_mark,
                 base_type,
@@ -401,11 +400,17 @@ pub struct Parser {
     allow_record_literals: Vec<bool>, //This might be a bit hacky but disambiguates nicely for now
 }
 
+impl Default for Parser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Parser {
     pub fn new() -> Parser {
-        return Parser {
+        Parser {
             allow_record_literals: vec![false],
-        };
+        }
     }
 
     pub fn parse_statements(&mut self, tokens: Vec<Token>) -> Result<Vec<Statement>, ParseError> {
@@ -414,7 +419,7 @@ impl Parser {
 
         let mut token_iter = tokens.iter().peekable();
 
-        while let Some(_) = token_iter.peek() {
+        while token_iter.peek().is_some() {
             let statement = self.parse_statement(&mut token_iter)?;
 
             statements.push(statement);
@@ -434,7 +439,7 @@ impl Parser {
         match current_token.kind {
             TokenKind::VarKeyword => {
                 let var_keyword = Self::expect_token(tokens, TokenKind::VarKeyword)?;
-                let loc = var_keyword.loc.clone();
+                let _loc = var_keyword.loc.clone();
 
                 let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
 
@@ -447,13 +452,13 @@ impl Parser {
                 };
 
                 let equals = Self::expect_token(tokens, TokenKind::Equals)?;
-                if let Some(_) = tokens.peek() {
+                if tokens.peek().is_some() {
                     self.allow_record_literals.push(true);
                     let initialiser = self.parse_binary_expression(tokens, 0)?;
                     self.allow_record_literals.pop();
                     let semicolon = Self::expect_token(tokens, TokenKind::Semicolon)?;
 
-                    return Ok(Statement {
+                    Ok(Statement {
                         kind: StatementKind::VariableDeclaration {
                             var_keyword: var_keyword.clone(),
                             identifier,
@@ -462,14 +467,14 @@ impl Parser {
                             initialiser,
                             semicolon,
                         },
-                    });
+                    })
                 } else {
                     Err(ParseError::UnexpectedEOF)
                 }
             }
             TokenKind::FunctionKeyword => {
                 let function_keyword = Self::expect_token(tokens, TokenKind::FunctionKeyword)?;
-                let loc = function_keyword.loc.clone();
+                let _loc = function_keyword.loc.clone();
 
                 let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
                 let open_paren = Self::expect_token(tokens, TokenKind::OpenParen)?;
@@ -490,7 +495,7 @@ impl Parser {
                     }
 
                     let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
-                    let loc = identifier.loc.clone();
+                    let _loc = identifier.loc.clone();
                     let type_annotation = self.parse_type_annotation(tokens)?;
 
                     args.push(Expression {
@@ -534,7 +539,7 @@ impl Parser {
             TokenKind::OpenCurly => self.parse_block_statement(tokens),
             TokenKind::IfKeyword => {
                 let if_keyword = Self::expect_token(tokens, TokenKind::IfKeyword)?;
-                let loc = if_keyword.loc.clone();
+                let _loc = if_keyword.loc.clone();
                 self.allow_record_literals.push(false);
                 let condition = self.parse_binary_expression(tokens, 0)?;
                 self.allow_record_literals.pop();
@@ -557,13 +562,13 @@ impl Parser {
                         if_keyword,
                         condition,
                         body: Box::new(body),
-                        else_body: else_body.map(|e| Box::new(e)),
+                        else_body: else_body.map(Box::new),
                     },
                 })
             }
             TokenKind::WhileKeyword => {
                 let while_keyword = Self::expect_token(tokens, TokenKind::WhileKeyword)?;
-                let loc = while_keyword.loc.clone();
+                let _loc = while_keyword.loc.clone();
                 let condition = self.parse_binary_expression(tokens, 0)?;
 
                 self.allow_record_literals.push(false);
@@ -674,7 +679,7 @@ impl Parser {
             }
             TokenKind::BreakKeyword => {
                 let break_keyword = Self::expect_token(tokens, TokenKind::BreakKeyword)?;
-                let loc = break_keyword.loc.clone();
+                let _loc = break_keyword.loc.clone();
                 Self::expect_token(tokens, TokenKind::Semicolon)?;
                 Ok(Statement {
                     kind: StatementKind::Break,
@@ -682,7 +687,7 @@ impl Parser {
             }
             TokenKind::ContinueKeyword => {
                 let continue_keyword = Self::expect_token(tokens, TokenKind::ContinueKeyword)?;
-                let loc = continue_keyword.loc.clone();
+                let _loc = continue_keyword.loc.clone();
                 Self::expect_token(tokens, TokenKind::Semicolon)?;
                 Ok(Statement {
                     kind: StatementKind::Continue,
@@ -690,7 +695,7 @@ impl Parser {
             }
             TokenKind::EnumKeyword => {
                 let enum_keyword = Self::expect_token(tokens, TokenKind::EnumKeyword)?;
-                let loc = enum_keyword.loc.clone();
+                let _loc = enum_keyword.loc.clone();
 
                 let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
                 Self::expect_token(tokens, TokenKind::OpenCurly)?;
@@ -756,7 +761,7 @@ impl Parser {
             }
             _ => {
                 let expression = self.parse_binary_expression(tokens, 0)?;
-                let loc = expression.kind.get_loc().clone();
+                let _loc = expression.kind.get_loc().clone();
 
                 let semicolon = Self::expect_token(tokens, TokenKind::Semicolon)?;
 
@@ -775,7 +780,7 @@ impl Parser {
         tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
     ) -> Result<Statement, ParseError> {
         let open_curly = Self::expect_token(tokens, TokenKind::OpenCurly)?;
-        let open_curly_loc = open_curly.loc.clone();
+        let _open_curly_loc = open_curly.loc.clone();
         let mut statements: Vec<Statement> = Vec::new();
         while let Some(current_token) = tokens.peek() {
             match current_token.kind {
@@ -852,9 +857,9 @@ impl Parser {
                             }
                         }
                     }
-                    return Ok(TypeExpressionKind::Basic {
+                    Ok(TypeExpressionKind::Basic {
                         identifier: token.clone(),
-                    });
+                    })
                 }
                 TokenKind::OpenSquare => {
                     let open_square = token;
@@ -868,23 +873,23 @@ impl Parser {
 
                             let element_type_kind = self.parse_type_expression_kind(tokens)?;
 
-                            return Ok(TypeExpressionKind::Array {
+                            Ok(TypeExpressionKind::Array {
                                 open_square: open_square.clone(),
                                 length: length_token.text.parse().expect("should not fail"),
                                 close_square,
                                 element_type: Box::new(element_type_kind),
-                            });
+                            })
                         }
                         TokenKind::CloseSquare => {
                             let element_type_kind = self.parse_type_expression_kind(tokens)?;
 
-                            return Ok(TypeExpressionKind::Slice {
+                            Ok(TypeExpressionKind::Slice {
                                 open_square: open_square.clone(),
                                 close_square: token.clone(),
                                 element_type: Box::new(element_type_kind),
-                            });
+                            })
                         }
-                        _ => return Err(ParseError::UnexpectedToken(next)),
+                        _ => Err(ParseError::UnexpectedToken(next)),
                     }
                 }
                 TokenKind::QuestionMark => {
@@ -904,14 +909,14 @@ impl Parser {
     }
 
     fn get_unary_operator_precedence(kind: &TokenKind) -> usize {
-        return match kind {
+        match kind {
             TokenKind::Plus | TokenKind::Minus | TokenKind::NotKeyword => 10,
             _ => 0,
-        };
+        }
     }
 
     fn parse_unary_op(token: Token) -> Result<UnaryOp, ParseError> {
-        return match token.kind {
+        match token.kind {
             TokenKind::Plus => Ok(UnaryOp {
                 kind: UnaryOpKind::Identity,
                 loc: token.loc,
@@ -925,11 +930,11 @@ impl Parser {
                 loc: token.loc,
             }),
             _ => Err(ParseError::UnexpectedToken(token)),
-        };
+        }
     }
 
     fn get_binary_operator_precedence(kind: &TokenKind) -> usize {
-        return match kind {
+        match kind {
             TokenKind::Star | TokenKind::Slash | TokenKind::Percent => 10,
             TokenKind::Plus | TokenKind::Minus => 9,
             TokenKind::CloseAngle
@@ -941,11 +946,11 @@ impl Parser {
             TokenKind::XorKeyword => 5,
             TokenKind::OrKeyword => 4,
             _ => 0,
-        };
+        }
     }
 
     fn parse_binary_op(token: Token) -> Result<BinaryOp, ParseError> {
-        return match token.kind {
+        match token.kind {
             TokenKind::Plus => Ok(BinaryOp {
                 kind: BinaryOpKind::Add,
                 loc: token.loc,
@@ -1003,7 +1008,7 @@ impl Parser {
                 loc: token.loc,
             }),
             _ => Err(ParseError::UnexpectedToken(token)),
-        };
+        }
     }
 
     fn parse_binary_expression(
@@ -1075,7 +1080,7 @@ impl Parser {
                 let token = tokens.next().expect("should never fail");
                 let binary_op = Self::parse_binary_op(token.clone())?;
 
-                if let Some(_) = tokens.peek() {
+                if tokens.peek().is_some() {
                     let right = self.parse_binary_expression(tokens, precedence)?;
                     left = Expression {
                         kind: ExpressionKind::Binary {
@@ -1213,17 +1218,17 @@ impl Parser {
         left: Expression,
         tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
     ) -> Result<Expression, ParseError> {
-        let open_square = Self::expect_token(tokens, TokenKind::OpenSquare)?;
+        let _open_square = Self::expect_token(tokens, TokenKind::OpenSquare)?;
         let index = self.parse_binary_expression(tokens, 0)?;
 
         Self::expect_token(tokens, TokenKind::CloseSquare)?;
 
-        return Ok(Expression {
+        Ok(Expression {
             kind: ExpressionKind::ArrayIndex {
                 array: Box::new(left),
                 index: Box::new(index),
             },
-        });
+        })
     }
 
     fn parse_assignment(
@@ -1232,7 +1237,7 @@ impl Parser {
         tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
         equals: &Token,
     ) -> Result<Expression, ParseError> {
-        if let Some(_) = tokens.peek() {
+        if tokens.peek().is_some() {
             self.allow_record_literals.push(true);
             let rhs = self.parse_binary_expression(tokens, 0)?;
             self.allow_record_literals.pop();
@@ -1280,14 +1285,14 @@ impl Parser {
             }
         }
 
-        return Ok(Expression {
+        Ok(Expression {
             kind: ExpressionKind::FunctionCall {
                 callee: Box::new(callee),
                 open_paren,
                 args,
                 close_paren: close_paren.unwrap(),
             },
-        });
+        })
     }
 
     fn parse_match_cases(
@@ -1314,7 +1319,7 @@ impl Parser {
                 Self::expect_token(tokens, TokenKind::Comma)?;
             }
         }
-        let close_curly = Self::expect_token(tokens, TokenKind::CloseCurly)?;
+        let _close_curly = Self::expect_token(tokens, TokenKind::CloseCurly)?;
 
         Ok(Statement {
             kind: StatementKind::MatchCases { cases },
@@ -1382,7 +1387,7 @@ impl Parser {
                     },
                 }),
                 TokenKind::OpenParen => {
-                    if let Some(current_token) = tokens.peek() {
+                    if let Some(_current_token) = tokens.peek() {
                         let expression = self.parse_binary_expression(tokens, 0)?;
                         Self::expect_token(tokens, TokenKind::CloseParen)?;
 

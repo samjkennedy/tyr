@@ -1,4 +1,4 @@
-use std::fs;
+
 use std::path::Path;
 use std::process::Command;
 use std::{env, fs::File};
@@ -87,7 +87,7 @@ fn main() {
                         loc.col + 1
                     )
                 }
-                ParseError::CannotStaticallyAccess(expression) => todo!(),
+                ParseError::CannotStaticallyAccess(_expression) => todo!(),
             }
             return;
         }

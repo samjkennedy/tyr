@@ -426,7 +426,7 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
 }
 
 fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression, RewriterError> {
-    return match expression.kind {
+    match expression.kind {
         CheckedExpressionKind::BoolLiteral { value: _ } => Ok(expression),
         CheckedExpressionKind::U8Literal { value: _ } => Ok(expression),
         CheckedExpressionKind::U16Literal { value: _ } => Ok(expression),
@@ -633,5 +633,5 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
                 loc: expression.loc.clone(),
             })
         }
-    };
+    }
 }

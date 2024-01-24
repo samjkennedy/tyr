@@ -84,12 +84,12 @@ pub struct Loc {
 }
 impl Loc {
     pub fn null() -> Loc {
-        return Loc {
+        Loc {
             file: "".to_string(),
             row: 0,
             col: 0,
             len: 0,
-        };
+        }
     }
 }
 
@@ -126,7 +126,7 @@ fn take_while(line: &str, col: usize, mut predicate: impl FnMut(char) -> bool) -
     let mut result = String::new();
     let mut current_col = col;
 
-    while let Some(next_char) = line.chars().skip(current_col).next() {
+    while let Some(next_char) = line.chars().nth(current_col) {
         if predicate(next_char) {
             result.push(next_char);
             current_col += 1;
@@ -161,7 +161,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
 
             match c {
                 '0'..='9' => {
-                    let int_literal = take_while(&line, col, |c| c.is_digit(10));
+                    let int_literal = take_while(&line, col, |c| c.is_ascii_digit());
                     col += int_literal.len();
 
                     // Check for a dot after parsing digits
@@ -171,7 +171,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                         && line.chars().nth(col + 1).unwrap() != '.'
                     {
                         col += 1; // Move past the dot
-                        let decimal_part = take_while(&line, col, |c| c.is_digit(10));
+                        let decimal_part = take_while(&line, col, |c| c.is_ascii_digit());
                         col += decimal_part.len();
 
                         let real_literal = format!("{}.{}", int_literal, decimal_part);
