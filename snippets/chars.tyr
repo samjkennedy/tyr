@@ -1,0 +1,11 @@
+function putc10(c: char) {
+    for i in 0..10 {
+        print(c);
+    }
+}
+
+function main() {
+    var c: char = 'e';
+
+    putc10(c);
+}

@@ -277,6 +277,9 @@ pub enum CheckedExpressionKind {
     I64Literal {
         value: i64,
     },
+    CharLiteral {
+        value: char,
+    },
     F32Literal {
         value: f32,
     },
@@ -1651,6 +1654,12 @@ impl TypeChecker {
                                     value: token.text.parse().expect("should not fail"),
                                 },
                             ),
+                            TypeKind::Char => (
+                                TypeKind::Char,
+                                CheckedExpressionKind::CharLiteral {
+                                    value: token.text.parse::<u8>().unwrap_or(0) as char,
+                                },
+                            ),
                             TypeKind::F32 => (
                                 TypeKind::F32,
                                 CheckedExpressionKind::F32Literal {
@@ -1714,6 +1723,57 @@ impl TypeChecker {
                                 value: token.text.parse().expect("should not fail"),
                             },
                         ),
+                    };
+                Ok(CheckedExpression {
+                    kind: checked_expression_kind,
+                    type_kind,
+                    loc: expression.kind.get_loc().clone(),
+                })
+            }
+            ExpressionKind::CharLiteral { token } => {
+                let (type_kind, checked_expression_kind) =
+                    match self.scope.assign_context.last().unwrap() {
+                        TypeKind::Char => (
+                            TypeKind::Char,
+                            CheckedExpressionKind::CharLiteral {
+                                value: token.text.parse().expect("should not fail"),
+                            },
+                        ),
+                        TypeKind::GenericParameter(name) => {
+                            match self.scope.try_get_generic_erasure(name) {
+                                Some(concrete_type) => {
+                                    self.expect_type(
+                                        concrete_type.clone(),
+                                        TypeKind::Char,
+                                        token.loc.clone(),
+                                    )?;
+                                    (
+                                        concrete_type,
+                                        CheckedExpressionKind::CharLiteral {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
+                                }
+                                None => {
+                                    self.scope
+                                        .generic_erasures
+                                        .insert(name.clone(), TypeKind::Char);
+                                    (
+                                        TypeKind::Char,
+                                        CheckedExpressionKind::CharLiteral {
+                                            value: token.text.parse().expect("should not fail"),
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(TypeCheckError::TypeMismatch {
+                                expected: self.scope.assign_context.last().unwrap().clone(),
+                                actual: TypeKind::Bool,
+                                loc: expression.kind.get_loc().clone(),
+                            })
+                        }
                     };
                 Ok(CheckedExpression {
                     kind: checked_expression_kind,
