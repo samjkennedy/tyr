@@ -295,7 +295,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                     col += 1;
                 }
                 '/' => match line.chars().nth(col + 1) {
-                    Some(next_char) if next_char == '/' => {
+                    Some('/') => {
                         //Comment
                         row += 1;
                         break;
@@ -394,7 +394,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '.' => {
                     let (token_kind, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '.' => (TokenKind::DotDot, 2),
+                        Some('.') => (TokenKind::DotDot, 2),
                         _ => (TokenKind::Dot, 1),
                     };
 
@@ -413,8 +413,8 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '?' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '.' => (TokenKind::QuestionDot, "?.", 2),
-                        Some(next_char) if next_char == ':' => (TokenKind::QuestionColon, "?:", 2),
+                        Some('.') => (TokenKind::QuestionDot, "?.", 2),
+                        Some(':') => (TokenKind::QuestionColon, "?:", 2),
                         _ => (TokenKind::QuestionMark, "?", 1),
                     };
 
@@ -459,8 +459,8 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '=' => {
                     let (token_kind, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '=' => (TokenKind::EqualsEquals, 2),
-                        Some(next_char) if next_char == '>' => (TokenKind::FatArrow, 2),
+                        Some('=') => (TokenKind::EqualsEquals, 2),
+                        Some('>') => (TokenKind::FatArrow, 2),
                         _ => (TokenKind::Equals, 1),
                     };
 
@@ -479,9 +479,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '<' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '=' => {
-                            (TokenKind::OpenAngleEquals, "<=", 2)
-                        }
+                        Some('=') => (TokenKind::OpenAngleEquals, "<=", 2),
                         _ => (TokenKind::OpenAngle, "<", 1),
                     };
 
@@ -500,7 +498,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '!' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '=' => (TokenKind::BangEquals, "!=", 2),
+                        Some('=') => (TokenKind::BangEquals, "!=", 2),
                         _ => (TokenKind::Bang, "!", 1),
                     };
 
@@ -519,9 +517,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '>' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '=' => {
-                            (TokenKind::CloseAngleEquals, ">=", 2)
-                        }
+                        Some('=') => (TokenKind::CloseAngleEquals, ">=", 2),
                         _ => (TokenKind::CloseAngle, ">", 1),
                     };
 
@@ -540,7 +536,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 ':' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == ':' => (TokenKind::ColonColon, "::", 2),
+                        Some(':') => (TokenKind::ColonColon, "::", 2),
                         _ => (TokenKind::Colon, ":", 1),
                     };
                     tokens.push(Token::new(
@@ -590,8 +586,8 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
     Ok(tokens)
 }
 
-fn match_keyword(identifier: &String) -> Option<TokenKind> {
-    return match identifier.as_str() {
+fn match_keyword(identifier: &str) -> Option<TokenKind> {
+    match identifier {
         "true" => Some(TokenKind::TrueKeyword),
         "false" => Some(TokenKind::FalseKeyword),
         "and" => Some(TokenKind::AndKeyword),
@@ -615,5 +611,5 @@ fn match_keyword(identifier: &String) -> Option<TokenKind> {
         "for" => Some(TokenKind::ForKeyword),
         "in" => Some(TokenKind::InKeyword),
         _ => None,
-    };
+    }
 }

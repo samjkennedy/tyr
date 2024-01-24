@@ -22,11 +22,11 @@ impl CEmitter {
 
     pub fn emit_module(&mut self, module: Module) -> io::Result<()> {
         //preamble
-        self.out_file.write(b"#include <stdio.h>\n")?;
-        self.out_file.write(b"#include <stdbool.h>\n")?;
-        self.out_file.write(b"#include <stdint.h>\n")?;
-        self.out_file.write(b"#include <stdlib.h>\n")?;
-        self.out_file.write(
+        self.out_file.write_all(b"#include <stdio.h>\n")?;
+        self.out_file.write_all(b"#include <stdbool.h>\n")?;
+        self.out_file.write_all(b"#include <stdint.h>\n")?;
+        self.out_file.write_all(b"#include <stdlib.h>\n")?;
+        self.out_file.write_all(
             b"#
         #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
         
@@ -542,7 +542,10 @@ impl CEmitter {
             CheckedExpressionKind::StaticAccessor { name, member } => {
                 write!(self.out_file, "{}_{}", name, member.name) //TODO member should be an expression we handle differently
             }
-            CheckedExpressionKind::MatchCase { pattern: _, result: _ } => todo!(),
+            CheckedExpressionKind::MatchCase {
+                pattern: _,
+                result: _,
+            } => todo!(),
             CheckedExpressionKind::Nil => write!(self.out_file, " NULL "),
             CheckedExpressionKind::ForceUnwrap { expression } => {
                 if let TypeKind::Optional(_) = expression.type_kind {

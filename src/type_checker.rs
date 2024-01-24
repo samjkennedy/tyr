@@ -1,8 +1,5 @@
 use core::{fmt, panic};
-use std::{
-    collections::HashMap,
-    path::{PathBuf},
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
     lexer::{lex_file, span_locs, Loc, Token, TokenKind},
@@ -559,25 +556,6 @@ impl Scope {
                 return match &self.parent {
                     Some(parent) => parent.try_get_generic_erasure(name),
                     None => None,
-                };
-            }
-        };
-    }
-
-    fn try_get_lookup_override(
-        &self,
-        name: &String,
-        loc: &Loc,
-    ) -> Result<(String, CheckedVariable), TypeCheckError> {
-        return match self.lookup_overrides.get(name) {
-            Some(lookup_override) => Ok(lookup_override.clone()),
-            None => {
-                return match &self.parent {
-                    Some(parent) => parent.try_get_lookup_override(name, loc),
-                    None => Err(TypeCheckError::NoSuchVariableDeclaredInScope {
-                        name: name.clone(),
-                        loc: loc.clone(),
-                    }),
                 };
             }
         };
@@ -1369,7 +1347,7 @@ impl TypeChecker {
         return_annotation: &Option<Expression>,
         args: &Vec<Expression>,
         function_keyword: &Token,
-        body: &Box<Statement>,
+        body: &Statement,
     ) -> Result<CheckedStatement, TypeCheckError> {
         let name = &identifier.text;
         let return_type: Option<TypeKind> = match return_annotation {
@@ -1536,7 +1514,10 @@ impl TypeChecker {
         if let TypeKind::Record(_expected_name, expected_generic_params, _) = &expected {
             if let TypeKind::Record(_actual_name, actual_generic_params, _) = &actual {
                 //TODO: There has to be a better condition
-                if !expected_generic_params.is_empty() && expected_generic_params.len() == actual_generic_params.len() && !self.module.types.contains(&expected) {
+                if !expected_generic_params.is_empty()
+                    && expected_generic_params.len() == actual_generic_params.len()
+                    && !self.module.types.contains(&expected)
+                {
                     self.module.types.push(expected);
                 }
                 return Ok(());
@@ -2133,7 +2114,9 @@ impl TypeChecker {
                             self.scope.assign_context.pop();
 
                             (TypeKind::Optional(base_type.clone()), checked_expr.kind)
-                        } else if let TypeKind::Record(name, _generic_params, members) = &record_type {
+                        } else if let TypeKind::Record(name, _generic_params, members) =
+                            &record_type
+                        {
                             let outer_scope = self.scope.clone();
                             self.scope = Scope::new_inner_scope(outer_scope.clone());
 
@@ -2144,9 +2127,7 @@ impl TypeChecker {
                             for (i, member) in members.iter().enumerate() {
                                 match args.get(i) {
                                     Some(arg) => {
-                                        self.scope
-                                            .assign_context
-                                            .push(member.type_kind.clone());
+                                        self.scope.assign_context.push(member.type_kind.clone());
                                         let checked_arg = self.type_check_expression(arg)?;
 
                                         //TODO: this needs to erase record_type's generics
@@ -2174,8 +2155,7 @@ impl TypeChecker {
                             self.scope = outer_scope;
 
                             if args.len() > n_members {
-                                let checked_arg =
-                                    self.type_check_expression(&args[n_members])?;
+                                let checked_arg = self.type_check_expression(&args[n_members])?;
                                 return Err(TypeCheckError::UnexpectedArgForRecord {
                                     type_kind: checked_arg.type_kind,
                                     record_name: record_name.clone(),
@@ -2503,35 +2483,35 @@ impl TypeChecker {
     }
 
     fn is_integer_type(kind: &TypeKind) -> bool {
-        match kind {
+        matches!(
+            kind,
             TypeKind::U8
-            | TypeKind::U16
-            | TypeKind::U32
-            | TypeKind::U64
-            | TypeKind::I8
-            | TypeKind::Char
-            | TypeKind::I16
-            | TypeKind::I32
-            | TypeKind::I64 => true,
-            _ => false,
-        }
+                | TypeKind::U16
+                | TypeKind::U32
+                | TypeKind::U64
+                | TypeKind::I8
+                | TypeKind::Char
+                | TypeKind::I16
+                | TypeKind::I32
+                | TypeKind::I64
+        )
     }
 
     fn is_number_type(kind: &TypeKind) -> bool {
-        match kind {
+        matches!(
+            kind,
             TypeKind::U8
-            | TypeKind::U16
-            | TypeKind::U32
-            | TypeKind::U64
-            | TypeKind::I8
-            | TypeKind::Char
-            | TypeKind::I16
-            | TypeKind::I32
-            | TypeKind::I64
-            | TypeKind::F32
-            | TypeKind::F64 => true,
-            _ => false,
-        }
+                | TypeKind::U16
+                | TypeKind::U32
+                | TypeKind::U64
+                | TypeKind::I8
+                | TypeKind::Char
+                | TypeKind::I16
+                | TypeKind::I32
+                | TypeKind::I64
+                | TypeKind::F32
+                | TypeKind::F64
+        )
     }
 
     fn check_unary_expression(
@@ -2640,15 +2620,12 @@ impl TypeChecker {
                 condition: _,
                 body,
                 else_body,
-            } => {
-                match else_body {
-                    Some(else_body) => {
-                        Self::all_paths_return_value(body)
-                            && Self::all_paths_return_value(else_body)
-                    }
-                    None => false,
+            } => match else_body {
+                Some(else_body) => {
+                    Self::all_paths_return_value(body) && Self::all_paths_return_value(else_body)
                 }
-            }
+                None => false,
+            },
             CheckedStatementKind::Return { .. } => true,
             CheckedStatementKind::Expression { .. }
             | CheckedStatementKind::VariableDeclaration { .. }
