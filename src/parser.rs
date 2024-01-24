@@ -106,6 +106,13 @@ pub enum ExpressionKind {
         elements: Vec<Expression>,
         close_curly: Token,
     },
+    DefaultArrayInitialiser {
+        array_type_expression_kind: TypeExpressionKind,
+        open_curly: Token,
+        value: Box<Expression>,
+        dotdotdot: Token,
+        close_curly: Token,
+    },
     Assignment {
         lhs: Box<Expression>,
         equals: Token,
@@ -205,6 +212,13 @@ impl Location for ExpressionKind {
                 array_type_expression_kind,
                 open_curly: _,
                 elements: _,
+                close_curly,
+            }
+            | ExpressionKind::DefaultArrayInitialiser {
+                array_type_expression_kind,
+                open_curly: _,
+                value: _,
+                dotdotdot: _,
                 close_curly,
             } => span_locs(&array_type_expression_kind.get_loc(), &close_curly.loc),
             ExpressionKind::Assignment {
@@ -1342,6 +1356,26 @@ impl Parser {
                     if tokens.peek().is_some()
                         && tokens.peek().unwrap().kind != TokenKind::CloseCurly
                     {
+                        if tokens.peek().unwrap().kind == TokenKind::DotDotDot {
+                            if elements.len() != 1 {
+                                return Err(ParseError::UnexpectedToken(
+                                    tokens.next().unwrap().clone(),
+                                ));
+                            }
+                            let dotdotdot = Self::expect_token(tokens, TokenKind::DotDotDot)?;
+                            let close_curly = Self::expect_token(tokens, TokenKind::CloseCurly)?;
+
+                            return Ok(Expression {
+                                kind: ExpressionKind::DefaultArrayInitialiser {
+                                    array_type_expression_kind,
+                                    open_curly,
+                                    value: Box::new(elements[0].clone()),
+                                    dotdotdot,
+                                    close_curly,
+                                },
+                            });
+                        }
+
                         Self::expect_token(tokens, TokenKind::Comma)?;
                     }
                 }

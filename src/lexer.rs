@@ -61,6 +61,7 @@ pub enum TokenKind {
     RecordKeyword,
     Dot,
     DotDot,
+    DotDotDot,
     BreakKeyword,
     ContinueKeyword,
     WithKeyword,
@@ -394,7 +395,10 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '.' => {
                     let (token_kind, advance_by) = match line.chars().nth(col + 1) {
-                        Some('.') => (TokenKind::DotDot, 2),
+                        Some('.') => match line.chars().nth(col + 2) {
+                            Some('.') => (TokenKind::DotDotDot, 3),
+                            _ => (TokenKind::DotDot, 2),
+                        },
                         _ => (TokenKind::Dot, 1),
                     };
 

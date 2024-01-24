@@ -633,5 +633,16 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
                 loc: expression.loc.clone(),
             })
         }
+        CheckedExpressionKind::DefaultArrayInitializer { value } => {
+            let rewritten_value = rewrite_expression(*value)?;
+
+            Ok(CheckedExpression {
+                kind: CheckedExpressionKind::DefaultArrayInitializer {
+                    value: Box::new(rewritten_value),
+                },
+                type_kind: expression.type_kind.clone(),
+                loc: expression.loc.clone(),
+            })
+        }
     }
 }

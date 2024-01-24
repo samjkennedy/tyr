@@ -347,6 +347,9 @@ pub enum CheckedExpressionKind {
         lower: Box<CheckedExpression>,
         upper: Box<CheckedExpression>,
     },
+    DefaultArrayInitializer {
+        value: Box<CheckedExpression>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -2455,6 +2458,34 @@ impl TypeChecker {
                         checked_optional.type_kind,
                         optional.kind.get_loc(),
                     ));
+                }
+            }
+            ExpressionKind::DefaultArrayInitialiser {
+                array_type_expression_kind,
+                open_curly: _,
+                value,
+                dotdotdot: _,
+                close_curly: _,
+            } => {
+                let array_type = self.scope.try_get_type(array_type_expression_kind)?;
+
+                match &array_type {
+                    TypeKind::Array(_size, element_type) => {
+                        self.scope.assign_context.push(*element_type.clone());
+                        let checked_value = self.type_check_expression(&value)?;
+
+                        self.scope.assign_context.pop();
+
+                        Ok(CheckedExpression {
+                            kind: CheckedExpressionKind::DefaultArrayInitializer {
+                                value: Box::new(checked_value),
+                            },
+                            type_kind: array_type,
+                            loc: expression.kind.get_loc(),
+                        })
+                    }
+                    TypeKind::Slice(_element_type) => todo!("Slice literals!"),
+                    _ => unreachable!(),
                 }
             }
         };

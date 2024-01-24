@@ -568,6 +568,17 @@ impl CEmitter {
                 Ok(())
             }
             CheckedExpressionKind::Range { lower: _, upper: _ } => todo!(),
+            CheckedExpressionKind::DefaultArrayInitializer { value } => {
+                //{ [0 ... 8] = 10 }
+                if let TypeKind::Array(size, _element_type) = &expression.type_kind {
+                    write!(self.out_file, "{{ [0 ... {}] = ", size - 1)?;
+                    self.emit_expression(value)?;
+                    write!(self.out_file, "}}")?;
+                    Ok(())
+                } else {
+                    unreachable!()
+                }
+            }
         }
     }
 
