@@ -152,7 +152,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
         col = 0;
 
         while col < line.len() {
-            let c = line.chars().nth(col).unwrap();
+            let c = line.chars().nth(col).unwrap(); //Doesn't handle unicode
 
             if c.is_whitespace() {
                 col += 1;

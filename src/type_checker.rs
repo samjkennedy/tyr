@@ -86,7 +86,7 @@ impl fmt::Display for TypeKind {
             }
             TypeKind::Enum(name, _) => write!(f, "{}", name),
             TypeKind::GenericParameter(name) => write!(f, "{}", name),
-            TypeKind::File => write!(f, "file"),
+            TypeKind::File => write!(f, "File"),
             TypeKind::Optional(base_type) => write!(f, "?{}", base_type),
         }
     }
@@ -404,7 +404,7 @@ impl Scope {
         };
 
         // TODO: package this into a module that must be imported
-        scope.types.insert("file".to_owned(), TypeKind::File);
+        scope.types.insert("File".to_owned(), TypeKind::File);
         // let mode_variants = vec!["Read".to_string(), "Write".to_string()];
         // let mode_enum = TypeKind::Enum("Mode".to_string(), mode_variants.clone());
 
@@ -2616,7 +2616,7 @@ impl TypeChecker {
                 });
             }
             BinaryOpKind::Eq | BinaryOpKind::NEq => {
-                if Self::is_number_type(&left) && Self::is_number_type(&right) {
+                if Self::is_number_type(left) && Self::is_number_type(right) {
                     return Ok(TypeKind::Bool);
                 }
                 if left == right {
@@ -2644,7 +2644,7 @@ impl TypeChecker {
                     }
                 }
                 //TODO warn about unreachable code
-                return false;
+                false
             }
             CheckedStatementKind::If {
                 condition: _,

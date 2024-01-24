@@ -30,12 +30,12 @@ function main() {
     var next_state = [64]u8{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     var n_iters = 100;
 
-    var f: ?file = open_file("rule_110.txt", "w");
+    var f: ?File = open_file("rule_110.txt", "w");
     if f == nil {
         println("Couldn't open file");
         return;
     }
-    var out_file: file = f!;
+    var out_file = f!;
 
     for it in 0..n_iters {
         for s in state {
