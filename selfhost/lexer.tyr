@@ -1,0 +1,15 @@
+enum TokenKind {
+    IntLiteral,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+}
+
+function main() {
+    var f = file_open("test.txt", "r")!;
+
+    while not f.eof() {
+        print(f.read_char());
+    }
+}

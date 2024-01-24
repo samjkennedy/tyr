@@ -1,4 +1,4 @@
-use std::fs;
+
 use std::path::Path;
 use std::process::Command;
 use std::{env, fs::File};
@@ -32,6 +32,8 @@ fn main() {
         eprintln!("Error: Input file must have a '.tyr' extension.");
         std::process::exit(1);
     }
+    let file_path = Path::new(&file_name);
+    let module_name = file_path.file_stem().unwrap().to_str().unwrap().to_string();
 
     let tokens = match lex_file(file_name.to_string()) {
         Ok(tokens) => tokens,
@@ -85,13 +87,13 @@ fn main() {
                         loc.col + 1
                     )
                 }
-                ParseError::CannotStaticallyAccess(..) => todo!(),
+                ParseError::CannotStaticallyAccess(_expression) => todo!(),
             }
             return;
         }
     };
 
-    let mut type_checker = TypeChecker::new();
+    let mut type_checker = TypeChecker::new(module_name);
 
     let mut module = match type_checker.type_check_statements(statements) {
         Ok(module) => module,

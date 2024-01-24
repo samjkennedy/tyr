@@ -1,0 +1,9 @@
+function main() {
+
+    var value = 5;
+    var arr = [5]u32{value...};
+
+    for i in arr {
+        println(i);
+    }
+}

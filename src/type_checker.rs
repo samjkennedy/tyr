@@ -1,10 +1,10 @@
 use core::{fmt, panic};
-use std::{collections::HashMap, ops::Index};
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
-    lexer::{span_locs, Loc, Token, TokenKind},
+    lexer::{lex_file, span_locs, Loc, Token, TokenKind},
     parser::{
-        self, BinaryOp, BinaryOpKind, Expression, ExpressionKind, Location, Statement,
+        self, BinaryOp, BinaryOpKind, Expression, ExpressionKind, Location, Parser, Statement,
         StatementKind, TypeExpressionKind, UnaryOp, UnaryOpKind,
     },
 };
@@ -28,7 +28,7 @@ pub enum TypeKind {
     Array(usize, Box<TypeKind>),
     Slice(Box<TypeKind>),
     Record(String, Vec<TypeKind>, Vec<CheckedVariable>),
-    Range(Box<TypeKind>, Box<TypeKind>),
+    Range(Box<TypeKind>),
     Enum(String, Vec<String>),
     GenericParameter(String),
     Optional(Box<TypeKind>),
@@ -60,7 +60,7 @@ impl fmt::Display for TypeKind {
             TypeKind::Slice(inner_type) => {
                 write!(f, "[]{}", inner_type)
             }
-            TypeKind::Record(name, generic_parameters, fields) => {
+            TypeKind::Record(name, generic_parameters, _fields) => {
                 if generic_parameters.is_empty() {
                     write!(f, "{}", name)
                 } else {
@@ -76,12 +76,12 @@ impl fmt::Display for TypeKind {
                     )
                 }
             }
-            TypeKind::Range(lower, upper) => {
-                write!(f, "range<{}, {}>", lower, upper)
+            TypeKind::Range(inner_type) => {
+                write!(f, "range<{}>", inner_type)
             }
             TypeKind::Enum(name, _) => write!(f, "{}", name),
             TypeKind::GenericParameter(name) => write!(f, "{}", name),
-            TypeKind::File => write!(f, "file"),
+            TypeKind::File => write!(f, "File"),
             TypeKind::Optional(base_type) => write!(f, "?{}", base_type),
         }
     }
@@ -177,6 +177,13 @@ pub enum TypeCheckError {
         type_kind: TypeKind,
         loc: Loc,
     },
+    NoSuchNamespaceDeclaredInScope {
+        namespace: Token,
+    },
+    CannotIterateType {
+        type_kind: TypeKind,
+        loc: Loc,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -227,6 +234,12 @@ pub enum CheckedStatementKind {
     Match {
         expression: CheckedExpression,
         cases: Box<CheckedStatement>,
+    },
+    NoOp,
+    ForIn {
+        iterator: CheckedVariable,
+        iterable: CheckedExpression,
+        body: Box<CheckedStatement>,
     },
 }
 
@@ -330,6 +343,13 @@ pub enum CheckedExpressionKind {
     ForceUnwrap {
         expression: Box<CheckedExpression>,
     },
+    Range {
+        lower: Box<CheckedExpression>,
+        upper: Box<CheckedExpression>,
+    },
+    DefaultArrayInitializer {
+        value: Box<CheckedExpression>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -382,7 +402,7 @@ impl Scope {
         };
 
         // TODO: package this into a module that must be imported
-        scope.types.insert("file".to_owned(), TypeKind::File);
+        scope.types.insert("File".to_owned(), TypeKind::File);
         // let mode_variants = vec!["Read".to_string(), "Write".to_string()];
         // let mode_enum = TypeKind::Enum("Mode".to_string(), mode_variants.clone());
 
@@ -426,9 +446,9 @@ impl Scope {
         // scope.modules.insert("Mode".to_string(), module);
 
         scope.functions.insert(
-            "file_open".to_owned(),
+            "open_file".to_owned(),
             CheckedFunction {
-                name: "file_open".to_owned(),
+                name: "open_file".to_owned(),
                 args: vec![TypeKind::String, TypeKind::String],
                 return_type: Some(TypeKind::Optional(Box::new(TypeKind::File))),
                 declaration_loc: Loc {
@@ -454,6 +474,34 @@ impl Scope {
             },
         );
         scope.functions.insert(
+            "write".to_owned(),
+            CheckedFunction {
+                name: "write".to_owned(),
+                args: vec![TypeKind::File, TypeKind::String],
+                return_type: None,
+                declaration_loc: Loc {
+                    file: "".to_owned(),
+                    row: 0,
+                    col: 0,
+                    len: 0,
+                },
+            },
+        );
+        scope.functions.insert(
+            "eof".to_owned(),
+            CheckedFunction {
+                name: "eof".to_owned(),
+                args: vec![TypeKind::File],
+                return_type: Some(TypeKind::Bool),
+                declaration_loc: Loc {
+                    file: "".to_owned(),
+                    row: 0,
+                    col: 0,
+                    len: 0,
+                },
+            },
+        );
+        scope.functions.insert(
             "close".to_owned(),
             CheckedFunction {
                 name: "close".to_owned(),
@@ -468,11 +516,11 @@ impl Scope {
             },
         );
 
-        return scope;
+        scope
     }
 
     fn new_inner_scope(parent: Scope) -> Scope {
-        return Scope {
+        Scope {
             return_context: parent.return_context.clone(),
             assign_context: parent.assign_context.clone(),
             parent: Some(Box::new(parent)),
@@ -482,7 +530,7 @@ impl Scope {
             lookup_overrides: HashMap::new(),
             types: HashMap::new(),
             generic_erasures: HashMap::new(),
-        };
+        }
     }
 
     fn try_get_variable(
@@ -511,25 +559,6 @@ impl Scope {
                 return match &self.parent {
                     Some(parent) => parent.try_get_generic_erasure(name),
                     None => None,
-                };
-            }
-        };
-    }
-
-    fn try_get_lookup_override(
-        &self,
-        name: &String,
-        loc: &Loc,
-    ) -> Result<(String, CheckedVariable), TypeCheckError> {
-        return match self.lookup_overrides.get(name) {
-            Some(lookup_override) => Ok(lookup_override.clone()),
-            None => {
-                return match &self.parent {
-                    Some(parent) => parent.try_get_lookup_override(name, loc),
-                    None => Err(TypeCheckError::NoSuchVariableDeclaredInScope {
-                        name: name.clone(),
-                        loc: loc.clone(),
-                    }),
                 };
             }
         };
@@ -592,7 +621,7 @@ impl Scope {
                     });
                 }
                 self.types.insert(name.clone(), type_kind);
-                return Ok(());
+                Ok(())
             }
             TypeKind::GenericParameter(name) => {
                 if self.types.contains_key(name) {
@@ -602,7 +631,7 @@ impl Scope {
                     });
                 }
                 self.types.insert(name.clone(), type_kind);
-                return Ok(());
+                Ok(())
             }
             TypeKind::Enum(name, variants) => {
                 if self.types.contains_key(name) {
@@ -633,7 +662,7 @@ impl Scope {
                 }
 
                 self.modules.insert(name.clone(), module);
-                return Ok(());
+                Ok(())
             }
             _ => panic!("Cannot declare {} types", type_kind),
         }
@@ -703,7 +732,7 @@ impl Scope {
                 close_square: _,
                 element_type,
             } => {
-                let element_type_kind = self.try_get_type(&element_type)?;
+                let element_type_kind = self.try_get_type(element_type)?;
 
                 Ok(TypeKind::Array(*length, Box::new(element_type_kind)))
             }
@@ -712,7 +741,7 @@ impl Scope {
                 close_square: _,
                 element_type,
             } => {
-                let element_type_kind = self.try_get_type(&element_type)?;
+                let element_type_kind = self.try_get_type(element_type)?;
                 Ok(TypeKind::Slice(Box::new(element_type_kind)))
             }
             TypeExpressionKind::Generic {
@@ -722,7 +751,7 @@ impl Scope {
                 close_angle,
             } => {
                 if let TypeKind::Record(name, generic_params, members) =
-                    self.try_get_type(&generic_type)?
+                    self.try_get_type(generic_type)?
                 {
                     let mut erased_generics = HashMap::new();
                     if generic_parameter_types.len() != generic_params.len() {
@@ -792,7 +821,7 @@ impl Scope {
                 question_mark: _,
                 base_type,
             } => {
-                let checked_base_type = self.try_get_type(&base_type)?;
+                let checked_base_type = self.try_get_type(base_type)?;
 
                 Ok(TypeKind::Optional(Box::new(checked_base_type)))
             }
@@ -802,17 +831,21 @@ impl Scope {
 
 #[derive(Debug, Clone)]
 pub struct Module {
+    pub name: String,
+    pub imports: HashMap<String, Module>,
     pub types: Vec<TypeKind>,
     pub statements: Vec<CheckedStatement>,
     //TODO: eventually move all global declarations here, variables, functions, all types, etc
 }
 
 impl Module {
-    fn new() -> Module {
-        return Module {
+    fn new(name: String) -> Module {
+        Module {
+            name,
+            imports: HashMap::new(),
             types: Vec::new(),
             statements: Vec::new(),
-        };
+        }
     }
 }
 
@@ -822,11 +855,11 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn new() -> TypeChecker {
-        return TypeChecker {
-            module: Module::new(),
+    pub fn new(module_name: String) -> TypeChecker {
+        TypeChecker {
+            module: Module::new(module_name),
             scope: Scope::new_global_scope(),
-        };
+        }
     }
 
     pub fn type_check_statements(
@@ -854,7 +887,7 @@ impl TypeChecker {
 
                 let mut checked_statements: Vec<CheckedStatement> = vec![];
                 for statement in statements {
-                    checked_statements.push(self.type_check_statement(&statement)?);
+                    checked_statements.push(self.type_check_statement(statement)?);
                 }
 
                 self.scope = outer_scope;
@@ -879,7 +912,7 @@ impl TypeChecker {
                         type_expression_kind,
                     } = &type_annotation.kind
                     {
-                        let type_kind = self.scope.try_get_type(&type_expression_kind)?;
+                        let type_kind = self.scope.try_get_type(type_expression_kind)?;
 
                         self.scope.assign_context.push(type_kind.clone());
 
@@ -964,7 +997,7 @@ impl TypeChecker {
                     kind: CheckedStatementKind::If {
                         condition: checked_condition,
                         body: Box::new(checked_body),
-                        else_body: checked_else_body.map(|e| Box::new(e)),
+                        else_body: checked_else_body.map(Box::new),
                     },
                 })
             }
@@ -995,7 +1028,11 @@ impl TypeChecker {
                 return_value,
             } => {
                 if let Some(return_value) = return_value {
+                    self.scope
+                        .assign_context
+                        .push(self.scope.return_context.clone());
                     let checked_return_value = self.type_check_expression(return_value)?;
+                    self.scope.assign_context.pop();
 
                     self.expect_type(
                         self.scope.return_context.clone(),
@@ -1008,9 +1045,9 @@ impl TypeChecker {
                         },
                     });
                 }
-                return Ok(CheckedStatement {
+                Ok(CheckedStatement {
                     kind: CheckedStatementKind::Return { return_value: None },
-                });
+                })
             }
             StatementKind::Record {
                 record_keyword,
@@ -1058,10 +1095,10 @@ impl TypeChecker {
                                     }
                                 }
                                 if type_kind == TypeKind::Unit {
-                                    type_kind = self.scope.try_get_type(&type_expression_kind)?;
+                                    type_kind = self.scope.try_get_type(type_expression_kind)?;
                                 }
                             } else {
-                                type_kind = self.scope.try_get_type(&type_expression_kind)?;
+                                type_kind = self.scope.try_get_type(type_expression_kind)?;
                             }
                         } else {
                             type_kind = self.scope.try_get_type(type_expression_kind)?;
@@ -1155,6 +1192,108 @@ impl TypeChecker {
                     },
                 })
             }
+            StatementKind::Import {
+                import_keyword: _,
+                path,
+            } => {
+                let module_name = path.last().unwrap().text.clone();
+                let mut pb: PathBuf = PathBuf::from(".");
+                for path_component in path {
+                    pb.push(path_component.text.clone());
+                }
+                pb.set_extension("tyr");
+
+                let module = match pb.into_os_string().into_string() {
+                    Ok(p) => {
+                        let res = lex_file(p);
+                        match res {
+                            Ok(tokens) => {
+                                let mut parser = Parser::new();
+                                let statements: Vec<Statement> = match parser
+                                    .parse_statements(tokens)
+                                {
+                                    Ok(statements) => statements,
+                                    Err(parse_error) => {
+                                        todo!("hand this to the diagnoster:\n {:?}", parse_error)
+                                    }
+                                };
+
+                                let mut module_type_checker = TypeChecker::new(module_name.clone());
+
+                                module_type_checker.type_check_statements(statements)?
+                            }
+                            Err(lex_error) => {
+                                todo!("hand this to the diagnoster:\n {:?}", lex_error)
+                            }
+                        }
+                    }
+                    Err(_e) => todo!(),
+                };
+                //For realsies it would probably a good idea to build a graph of imports
+                self.module.imports.insert(module_name.clone(), module);
+
+                Ok(CheckedStatement {
+                    kind: CheckedStatementKind::NoOp,
+                })
+            }
+            StatementKind::ForIn {
+                for_keyword: _,
+                iterator,
+                in_keyword: _is_digit,
+                iterable,
+                body,
+            } => {
+                let checked_iterable = self.type_check_expression(iterable)?;
+
+                //todo: too much cloning here
+                let outer_scope = self.scope.clone();
+                self.scope = Scope::new_inner_scope(outer_scope.clone());
+
+                match &checked_iterable.type_kind {
+                    TypeKind::Range(range_type) => {
+                        let checked_iterator = CheckedVariable {
+                            name: iterator.text.clone(),
+                            type_kind: *range_type.clone(),
+                            declaration_loc: iterator.loc.clone(),
+                        };
+                        self.scope
+                            .try_declare_variable(checked_iterator.clone(), iterator.loc.clone())?;
+
+                        let checked_body = self.type_check_statement(body)?;
+
+                        Ok(CheckedStatement {
+                            kind: CheckedStatementKind::ForIn {
+                                iterator: checked_iterator,
+                                iterable: checked_iterable,
+                                body: Box::new(checked_body),
+                            },
+                        })
+                    }
+                    TypeKind::Array(_, inner_type) => {
+                        let checked_iterator = CheckedVariable {
+                            name: iterator.text.clone(),
+                            type_kind: *inner_type.clone(),
+                            declaration_loc: iterator.loc.clone(),
+                        };
+                        self.scope
+                            .try_declare_variable(checked_iterator.clone(), iterator.loc.clone())?;
+
+                        let checked_body = self.type_check_statement(body)?;
+
+                        Ok(CheckedStatement {
+                            kind: CheckedStatementKind::ForIn {
+                                iterator: checked_iterator,
+                                iterable: checked_iterable,
+                                body: Box::new(checked_body),
+                            },
+                        })
+                    }
+                    _ => Err(TypeCheckError::CannotIterateType {
+                        type_kind: checked_iterable.type_kind,
+                        loc: checked_iterable.loc,
+                    }),
+                }
+            }
         }
     }
 
@@ -1172,14 +1311,14 @@ impl TypeChecker {
                     result,
                 } = &case.kind
                 {
-                    let checked_pattern = self.type_check_expression(&pattern)?;
+                    let checked_pattern = self.type_check_expression(pattern)?;
                     self.expect_type(
                         expression_type_kind.clone(),
                         checked_pattern.type_kind.clone(),
                         pattern.kind.get_loc(),
                     )?;
 
-                    let checked_result = self.type_check_expression(&result)?;
+                    let checked_result = self.type_check_expression(result)?;
 
                     let checked_case = CheckedExpression {
                         kind: CheckedExpressionKind::MatchCase {
@@ -1195,11 +1334,11 @@ impl TypeChecker {
                     unreachable!()
                 }
             }
-            return Ok(CheckedStatement {
+            Ok(CheckedStatement {
                 kind: CheckedStatementKind::MatchCases {
                     cases: checked_cases,
                 },
-            });
+            })
         } else {
             unreachable!()
         }
@@ -1211,7 +1350,7 @@ impl TypeChecker {
         return_annotation: &Option<Expression>,
         args: &Vec<Expression>,
         function_keyword: &Token,
-        body: &Box<Statement>,
+        body: &Statement,
     ) -> Result<CheckedStatement, TypeCheckError> {
         let name = &identifier.text;
         let return_type: Option<TypeKind> = match return_annotation {
@@ -1221,7 +1360,7 @@ impl TypeChecker {
                     type_expression_kind,
                 } = &type_annotation.kind
                 {
-                    let type_kind = self.scope.try_get_type(&type_expression_kind)?;
+                    let type_kind = self.scope.try_get_type(type_expression_kind)?;
                     Some(type_kind)
                 } else {
                     unreachable!()
@@ -1242,7 +1381,7 @@ impl TypeChecker {
                     type_expression_kind,
                 } = &type_annotation.kind
                 {
-                    checked_args.push(self.scope.try_get_type(&type_expression_kind)?)
+                    checked_args.push(self.scope.try_get_type(type_expression_kind)?)
                 } else {
                     unreachable!()
                 }
@@ -1267,13 +1406,11 @@ impl TypeChecker {
         let checked_args: Vec<CheckedVariable> = self.type_check_function_parameters(args)?;
 
         let checked_body = self.type_check_statement(body)?;
-        if return_type.is_some() {
-            if !Self::all_paths_return_value(&checked_body) {
-                return Err(TypeCheckError::NotAllCodePathsReturnValue {
-                    name: name.clone(),
-                    loc: identifier.loc.clone(),
-                });
-            }
+        if return_type.is_some() && !Self::all_paths_return_value(&checked_body) {
+            return Err(TypeCheckError::NotAllCodePathsReturnValue {
+                name: name.clone(),
+                loc: identifier.loc.clone(),
+            });
         }
         self.scope = outer_scope;
         Ok(CheckedStatement {
@@ -1300,11 +1437,11 @@ impl TypeChecker {
             {
                 let name = arg_identifier.text.to_owned();
                 if let ExpressionKind::TypeAnnotation {
-                    colon,
+                    colon: _,
                     type_expression_kind,
                 } = &type_annotation.kind
                 {
-                    let type_kind = self.scope.try_get_type(&type_expression_kind)?;
+                    let type_kind = self.scope.try_get_type(type_expression_kind)?;
                     let arg = CheckedVariable {
                         name,
                         type_kind: type_kind.clone(),
@@ -1377,24 +1514,23 @@ impl TypeChecker {
                 return self.expect_type(*from_el_type.clone(), *to_el_type, loc);
             }
         }
-        if let TypeKind::Record(expected_name, expected_generic_params, _) = &expected {
-            if let TypeKind::Record(actual_name, actual_generic_params, _) = &actual {
+        if let TypeKind::Record(_expected_name, expected_generic_params, _) = &expected {
+            if let TypeKind::Record(_actual_name, actual_generic_params, _) = &actual {
                 //TODO: There has to be a better condition
-                if expected_generic_params.len() > 0
+                if !expected_generic_params.is_empty()
                     && expected_generic_params.len() == actual_generic_params.len()
+                    && !self.module.types.contains(&expected)
                 {
-                    if !self.module.types.contains(&expected) {
-                        self.module.types.push(expected);
-                    }
+                    self.module.types.push(expected);
                 }
                 return Ok(());
             }
         }
-        return Err(TypeCheckError::TypeMismatch {
+        Err(TypeCheckError::TypeMismatch {
             expected: expected.clone(),
             actual,
             loc,
-        });
+        })
     }
 
     fn type_check_expression(
@@ -1528,7 +1664,7 @@ impl TypeChecker {
                                 },
                             ),
                             TypeKind::GenericParameter(name) => {
-                                match self.scope.try_get_generic_erasure(&name) {
+                                match self.scope.try_get_generic_erasure(name) {
                                     Some(concrete_type) => {
                                         self.expect_type(
                                             concrete_type.clone(),
@@ -1644,9 +1780,9 @@ impl TypeChecker {
                 loc: expression.kind.get_loc().clone(),
             }),
             ExpressionKind::Unary { op, operand } => {
-                let checked_operand = self.type_check_expression(&operand)?;
+                let checked_operand = self.type_check_expression(operand)?;
 
-                let type_kind = Self::check_unary_expression(&op, &checked_operand.type_kind)?;
+                let type_kind = Self::check_unary_expression(op, &checked_operand.type_kind)?;
 
                 Ok(CheckedExpression {
                     kind: CheckedExpressionKind::Unary {
@@ -1658,19 +1794,19 @@ impl TypeChecker {
                 })
             }
             ExpressionKind::Binary { left, op, right } => {
-                let checked_left = self.type_check_expression(&left)?;
+                let checked_left = self.type_check_expression(left)?;
 
                 self.scope
                     .assign_context
                     .push(checked_left.type_kind.clone());
 
-                let checked_right = self.type_check_expression(&right)?;
+                let checked_right = self.type_check_expression(right)?;
 
                 self.scope.assign_context.pop();
 
                 let type_kind = Self::check_binary_expression(
                     &checked_left.type_kind,
-                    &op,
+                    op,
                     &checked_right.type_kind,
                 )?;
 
@@ -1685,7 +1821,7 @@ impl TypeChecker {
                 })
             }
             ExpressionKind::Parenthesised { expression } => {
-                let checked_inner = self.type_check_expression(&expression)?;
+                let checked_inner = self.type_check_expression(expression)?;
                 let checked_type = checked_inner.type_kind.clone();
 
                 Ok(CheckedExpression {
@@ -1798,7 +1934,7 @@ impl TypeChecker {
                 //TMP
                 if name == "print" {
                     let checked_arg = self.type_check_expression(&args[0])?;
-                    if let TypeKind::Optional(base_type) = &checked_arg.type_kind {
+                    if let TypeKind::Optional(_base_type) = &checked_arg.type_kind {
                         return Err(TypeCheckError::CannotPassOptionalTypeToFunction {
                             type_kind: checked_arg.type_kind,
                             loc: args[0].kind.get_loc(),
@@ -1815,7 +1951,7 @@ impl TypeChecker {
                 }
                 if name == "println" {
                     let checked_arg = self.type_check_expression(&args[0])?;
-                    if let TypeKind::Optional(base_type) = &checked_arg.type_kind {
+                    if let TypeKind::Optional(_base_type) = &checked_arg.type_kind {
                         return Err(TypeCheckError::CannotPassOptionalTypeToFunction {
                             type_kind: checked_arg.type_kind,
                             loc: args[0].kind.get_loc(),
@@ -1834,7 +1970,7 @@ impl TypeChecker {
 
                 let checked_function = self
                     .scope
-                    .try_get_function(&name, &callee.kind.get_loc())?
+                    .try_get_function(name, &callee.kind.get_loc())?
                     .clone();
 
                 let mut checked_args: Vec<CheckedExpression> = Vec::new();
@@ -1920,12 +2056,12 @@ impl TypeChecker {
                             loc: expression.kind.get_loc(),
                         })
                     }
-                    TypeKind::Slice(element_type) => todo!("Slice literals!"),
+                    TypeKind::Slice(_element_type) => todo!("Slice literals!"),
                     _ => unreachable!(),
                 }
             }
             ExpressionKind::ArrayIndex { array, index } => {
-                let checked_array = self.type_check_expression(&array)?;
+                let checked_array = self.type_check_expression(array)?;
 
                 match &checked_array.type_kind.clone() {
                     TypeKind::Array(_, el_type) | TypeKind::Slice(el_type) => {
@@ -1971,19 +2107,19 @@ impl TypeChecker {
                     .assign_context
                     .clone()
                     .last()
-                    .expect("no context")
                 {
-                    TypeKind::Optional(base_type) => {
-                        self.scope.assign_context.push(*base_type.clone());
+                    Some(ty) => {
+                        if let TypeKind::Optional(base_type) = ty {
+                            self.scope.assign_context.push(*base_type.clone());
 
-                        let checked_expr = self.type_check_expression(expression)?;
+                            let checked_expr = self.type_check_expression(expression)?;
 
-                        self.scope.assign_context.pop();
+                            self.scope.assign_context.pop();
 
-                        (TypeKind::Optional(base_type.clone()), checked_expr.kind)
-                    }
-                    _ => {
-                        if let TypeKind::Record(name, generic_params, members) = &record_type {
+                            (TypeKind::Optional(base_type.clone()), checked_expr.kind)
+                        } else if let TypeKind::Record(name, _generic_params, members) =
+                            &record_type
+                        {
                             let outer_scope = self.scope.clone();
                             self.scope = Scope::new_inner_scope(outer_scope.clone());
 
@@ -1991,7 +2127,7 @@ impl TypeChecker {
 
                             //generic_params = T, U, V etc
                             let mut checked_args: Vec<CheckedExpression> = Vec::new();
-                            for (i, member) in members.into_iter().enumerate() {
+                            for (i, member) in members.iter().enumerate() {
                                 match args.get(i) {
                                     Some(arg) => {
                                         self.scope.assign_context.push(member.type_kind.clone());
@@ -2037,7 +2173,67 @@ impl TypeChecker {
                             )
                         } else {
                             //TODO: maybe better error
-                            println!("sneep");
+                            return Err(TypeCheckError::NoSuchTypeDeclaredInScope {
+                                name: record_name.clone(),
+                                loc: open_curly.loc.clone(),
+                            });
+                        }
+                    }
+                    None => {
+                        if let TypeKind::Record(name, _generic_params, members) = &record_type {
+                            let outer_scope = self.scope.clone();
+                            self.scope = Scope::new_inner_scope(outer_scope.clone());
+
+                            let n_members = members.len();
+
+                            //generic_params = T, U, V etc
+                            let mut checked_args: Vec<CheckedExpression> = Vec::new();
+                            for (i, member) in members.iter().enumerate() {
+                                match args.get(i) {
+                                    Some(arg) => {
+                                        self.scope.assign_context.push(member.type_kind.clone());
+                                        let checked_arg = self.type_check_expression(arg)?;
+
+                                        //TODO: this needs to erase record_type's generics
+
+                                        self.scope.assign_context.pop();
+
+                                        self.expect_type(
+                                            member.type_kind.clone(),
+                                            checked_arg.type_kind.clone(),
+                                            arg.kind.get_loc().clone(),
+                                        )?;
+                                        checked_args.push(checked_arg);
+                                    }
+                                    None => {
+                                        return Err(TypeCheckError::MissingArgForRecord {
+                                            record_name: name.clone(),
+                                            name: member.name.clone(),
+                                            type_kind: member.type_kind.clone(),
+                                            loc: close_curly.loc.clone(),
+                                        })
+                                    }
+                                }
+                            }
+
+                            self.scope = outer_scope;
+
+                            if args.len() > n_members {
+                                let checked_arg = self.type_check_expression(&args[n_members])?;
+                                return Err(TypeCheckError::UnexpectedArgForRecord {
+                                    type_kind: checked_arg.type_kind,
+                                    record_name: record_name.clone(),
+                                    loc: args[n_members].kind.get_loc().clone(),
+                                });
+                            }
+                            (
+                                record_type,
+                                CheckedExpressionKind::RecordLiteral {
+                                    arguments: checked_args,
+                                },
+                            )
+                        } else {
+                            //TODO: maybe better error
                             return Err(TypeCheckError::NoSuchTypeDeclaredInScope {
                                 name: record_name.clone(),
                                 loc: open_curly.loc.clone(),
@@ -2057,8 +2253,8 @@ impl TypeChecker {
                 dot,
                 member_identifier,
             } => {
-                let checked_accessee = self.type_check_expression(&accessee)?;
-                if let TypeKind::Record(name, generic_params, members) =
+                let checked_accessee = self.type_check_expression(accessee)?;
+                if let TypeKind::Record(name, _generic_params, members) =
                     &checked_accessee.type_kind.clone()
                 {
                     let member_name = &member_identifier.text;
@@ -2090,9 +2286,9 @@ impl TypeChecker {
                 question_dot,
                 member_identifier,
             } => {
-                let checked_accessee = self.type_check_expression(&accessee)?;
+                let checked_accessee = self.type_check_expression(accessee)?;
                 if let TypeKind::Optional(base_type) = &checked_accessee.type_kind.clone() {
-                    if let TypeKind::Record(name, generic_params, members) = *base_type.clone() {
+                    if let TypeKind::Record(name, _generic_params, members) = *base_type.clone() {
                         let member_name = &member_identifier.text;
 
                         if let Some(member) = members.iter().find(|m| &m.name == member_name) {
@@ -2129,7 +2325,7 @@ impl TypeChecker {
                 dotdot: _,
                 upper,
             } => {
-                let checked_lower = self.type_check_expression(&lower)?;
+                let checked_lower = self.type_check_expression(lower)?;
 
                 if !Self::is_number_type(&checked_lower.type_kind) {
                     return Err(TypeCheckError::TypeMismatch {
@@ -2139,15 +2335,22 @@ impl TypeChecker {
                     });
                 }
 
-                let checked_upper = self.type_check_expression(&upper)?;
+                let checked_upper = self.type_check_expression(upper)?;
 
                 self.expect_type(
-                    checked_lower.type_kind,
-                    checked_upper.type_kind,
+                    checked_lower.type_kind.clone(),
+                    checked_upper.type_kind.clone(),
                     upper.kind.get_loc().clone(),
                 )?;
 
-                todo!()
+                Ok(CheckedExpression {
+                    type_kind: TypeKind::Range(Box::new(checked_lower.type_kind.clone())),
+                    kind: CheckedExpressionKind::Range {
+                        lower: Box::new(checked_lower),
+                        upper: Box::new(checked_upper),
+                    },
+                    loc: span_locs(&lower.kind.get_loc(), &upper.kind.get_loc()),
+                })
             }
             ExpressionKind::StaticAccessor {
                 namespace,
@@ -2155,6 +2358,7 @@ impl TypeChecker {
                 member,
             } => match &member.kind {
                 ExpressionKind::Variable { identifier } => {
+                    //TODO: Completely overhaul this branch once we have global constants, e.g. math::PI
                     let checked_member = self.scope.try_get_module_member(
                         &namespace.text.clone(),
                         &identifier.text,
@@ -2169,12 +2373,28 @@ impl TypeChecker {
                         loc: member.kind.get_loc().clone(),
                     })
                 }
-                _ => todo!(),
+                ExpressionKind::RecordLiteral {
+                    record_identifier: _,
+                    open_curly: _,
+                    args: _,
+                    close_curly: _,
+                } => match self.module.imports.get(&namespace.text) {
+                    Some(module) => {
+                        todo!("{:?}", module)
+                    }
+                    None => Err(TypeCheckError::NoSuchNamespaceDeclaredInScope {
+                        namespace: namespace.clone(),
+                    }),
+                },
+                _ => todo!(
+                    "static accessor not implemented for member type: {:?}",
+                    member.kind
+                ),
             },
             ExpressionKind::MatchCase {
-                pattern,
-                fat_arrow,
-                result,
+                pattern: _,
+                fat_arrow: _,
+                result: _,
             } => todo!(),
             ExpressionKind::Nil { nil_keyword } => match self.scope.assign_context.last() {
                 Some(type_kind) => match type_kind {
@@ -2196,7 +2416,7 @@ impl TypeChecker {
                 expression: inner_expression,
                 bang: _,
             } => {
-                let checked_inner = self.type_check_expression(&inner_expression)?;
+                let checked_inner = self.type_check_expression(inner_expression)?;
                 match &checked_inner.type_kind {
                     TypeKind::Optional(base_type) => Ok(CheckedExpression {
                         kind: CheckedExpressionKind::ForceUnwrap {
@@ -2216,9 +2436,9 @@ impl TypeChecker {
                 question_colon: _,
                 default,
             } => {
-                let checked_optional = self.type_check_expression(&optional)?;
+                let checked_optional = self.type_check_expression(optional)?;
                 if let TypeKind::Optional(base_type) = checked_optional.type_kind.clone() {
-                    let checked_default = self.type_check_expression(&default)?;
+                    let checked_default = self.type_check_expression(default)?;
                     self.expect_type(
                         *base_type.clone(),
                         checked_default.type_kind.clone(),
@@ -2238,6 +2458,34 @@ impl TypeChecker {
                         checked_optional.type_kind,
                         optional.kind.get_loc(),
                     ));
+                }
+            }
+            ExpressionKind::DefaultArrayInitialiser {
+                array_type_expression_kind,
+                open_curly: _,
+                value,
+                dotdotdot: _,
+                close_curly: _,
+            } => {
+                let array_type = self.scope.try_get_type(array_type_expression_kind)?;
+
+                match &array_type {
+                    TypeKind::Array(_size, element_type) => {
+                        self.scope.assign_context.push(*element_type.clone());
+                        let checked_value = self.type_check_expression(&value)?;
+
+                        self.scope.assign_context.pop();
+
+                        Ok(CheckedExpression {
+                            kind: CheckedExpressionKind::DefaultArrayInitializer {
+                                value: Box::new(checked_value),
+                            },
+                            type_kind: array_type,
+                            loc: expression.kind.get_loc(),
+                        })
+                    }
+                    TypeKind::Slice(_element_type) => todo!("Slice literals!"),
+                    _ => unreachable!(),
                 }
             }
         };
@@ -2266,35 +2514,35 @@ impl TypeChecker {
     }
 
     fn is_integer_type(kind: &TypeKind) -> bool {
-        match kind {
+        matches!(
+            kind,
             TypeKind::U8
-            | TypeKind::U16
-            | TypeKind::U32
-            | TypeKind::U64
-            | TypeKind::I8
-            | TypeKind::Char
-            | TypeKind::I16
-            | TypeKind::I32
-            | TypeKind::I64 => true,
-            _ => false,
-        }
+                | TypeKind::U16
+                | TypeKind::U32
+                | TypeKind::U64
+                | TypeKind::I8
+                | TypeKind::Char
+                | TypeKind::I16
+                | TypeKind::I32
+                | TypeKind::I64
+        )
     }
 
     fn is_number_type(kind: &TypeKind) -> bool {
-        match kind {
+        matches!(
+            kind,
             TypeKind::U8
-            | TypeKind::U16
-            | TypeKind::U32
-            | TypeKind::U64
-            | TypeKind::I8
-            | TypeKind::Char
-            | TypeKind::I16
-            | TypeKind::I32
-            | TypeKind::I64
-            | TypeKind::F32
-            | TypeKind::F64 => true,
-            _ => false,
-        }
+                | TypeKind::U16
+                | TypeKind::U32
+                | TypeKind::U64
+                | TypeKind::I8
+                | TypeKind::Char
+                | TypeKind::I16
+                | TypeKind::I32
+                | TypeKind::I64
+                | TypeKind::F32
+                | TypeKind::F64
+        )
     }
 
     fn check_unary_expression(
@@ -2303,24 +2551,24 @@ impl TypeChecker {
     ) -> Result<TypeKind, TypeCheckError> {
         match op.kind {
             parser::UnaryOpKind::Negation | parser::UnaryOpKind::Identity => {
-                if Self::is_number_type(&operand) {
+                if Self::is_number_type(operand) {
                     return Ok(operand.clone()); //todo pick right width
                 }
-                return Err(TypeCheckError::UnaryOpNotImplementedForType {
+                Err(TypeCheckError::UnaryOpNotImplementedForType {
                     op: op.kind.clone(),
                     operand: operand.clone(),
                     loc: op.loc.clone(),
-                });
+                })
             }
             parser::UnaryOpKind::Not => {
                 if operand == &TypeKind::Bool {
                     return Ok(TypeKind::Bool);
                 }
-                return Err(TypeCheckError::UnaryOpNotImplementedForType {
+                Err(TypeCheckError::UnaryOpNotImplementedForType {
                     op: op.kind.clone(),
                     operand: operand.clone(),
                     loc: op.loc.clone(),
-                });
+                })
             }
         }
     }
@@ -2336,51 +2584,51 @@ impl TypeChecker {
             | BinaryOpKind::Mul
             | BinaryOpKind::Div
             | BinaryOpKind::Rem => {
-                if Self::is_number_type(&left) && Self::is_number_type(&right) {
+                if Self::is_number_type(left) && Self::is_number_type(right) {
                     return Ok(left.clone()); //todo pick right width
                 }
-                return Err(TypeCheckError::BinaryOpNotImplementedForTypes {
+                Err(TypeCheckError::BinaryOpNotImplementedForTypes {
                     left: left.clone(),
                     op: op.kind.clone(),
                     right: right.clone(),
                     loc: op.loc.clone(),
-                });
+                })
             }
             BinaryOpKind::Lt | BinaryOpKind::LtEq | BinaryOpKind::Gt | BinaryOpKind::GtEq => {
-                if Self::is_number_type(&left) && Self::is_number_type(&right) {
+                if Self::is_number_type(left) && Self::is_number_type(right) {
                     return Ok(TypeKind::Bool);
                 }
-                return Err(TypeCheckError::BinaryOpNotImplementedForTypes {
+                Err(TypeCheckError::BinaryOpNotImplementedForTypes {
                     left: left.clone(),
                     op: op.kind.clone(),
                     right: right.clone(),
                     loc: op.loc.clone(),
-                });
+                })
             }
             BinaryOpKind::And | BinaryOpKind::Or | BinaryOpKind::Xor => {
                 if left == &TypeKind::Bool && right == &TypeKind::Bool {
                     return Ok(TypeKind::Bool);
                 }
-                return Err(TypeCheckError::BinaryOpNotImplementedForTypes {
+                Err(TypeCheckError::BinaryOpNotImplementedForTypes {
                     left: left.clone(),
                     op: op.kind.clone(),
                     right: right.clone(),
                     loc: op.loc.clone(),
-                });
+                })
             }
             BinaryOpKind::Eq | BinaryOpKind::NEq => {
-                if Self::is_number_type(&left) && Self::is_number_type(&right) {
+                if Self::is_number_type(left) && Self::is_number_type(right) {
                     return Ok(TypeKind::Bool);
                 }
                 if left == right {
                     return Ok(TypeKind::Bool);
                 }
-                return Err(TypeCheckError::BinaryOpNotImplementedForTypes {
+                Err(TypeCheckError::BinaryOpNotImplementedForTypes {
                     left: left.clone(),
                     op: op.kind.clone(),
                     right: right.clone(),
                     loc: op.loc.clone(),
-                });
+                })
             }
         }
     }
@@ -2388,7 +2636,7 @@ impl TypeChecker {
     fn all_paths_return_value(statement: &CheckedStatement) -> bool {
         match &statement.kind {
             CheckedStatementKind::Block { statements } => {
-                if statements.len() == 0 {
+                if statements.is_empty() {
                     return false;
                 }
                 for s in statements {
@@ -2397,21 +2645,18 @@ impl TypeChecker {
                     }
                 }
                 //TODO warn about unreachable code
-                return false;
+                false
             }
             CheckedStatementKind::If {
                 condition: _,
                 body,
                 else_body,
-            } => {
-                return match else_body {
-                    Some(else_body) => {
-                        Self::all_paths_return_value(body)
-                            && Self::all_paths_return_value(&else_body)
-                    }
-                    None => false,
-                };
-            }
+            } => match else_body {
+                Some(else_body) => {
+                    Self::all_paths_return_value(body) && Self::all_paths_return_value(else_body)
+                }
+                None => false,
+            },
             CheckedStatementKind::Return { .. } => true,
             CheckedStatementKind::Expression { .. }
             | CheckedStatementKind::VariableDeclaration { .. }
@@ -2422,7 +2667,13 @@ impl TypeChecker {
             | CheckedStatementKind::Break
             | CheckedStatementKind::Continue
             | CheckedStatementKind::MatchCases { .. }
-            | CheckedStatementKind::Match { .. } => false,
+            | CheckedStatementKind::Match { .. }
+            | CheckedStatementKind::NoOp => false,
+            CheckedStatementKind::ForIn {
+                iterator: _,
+                iterable: _,
+                body,
+            } => Self::all_paths_return_value(body),
         }
     }
 
@@ -2431,6 +2682,6 @@ impl TypeChecker {
             return true;
         }
         //TODO more complex coersion
-        return false;
+        false
     }
 }

@@ -56,9 +56,12 @@ pub enum TokenKind {
     IfKeyword,
     ElseKeyword,
     WhileKeyword,
+    ForKeyword,
+    InKeyword,
     RecordKeyword,
     Dot,
     DotDot,
+    DotDotDot,
     BreakKeyword,
     ContinueKeyword,
     WithKeyword,
@@ -70,6 +73,7 @@ pub enum TokenKind {
     NilKeyword,
     QuestionDot,
     QuestionColon,
+    ImportKeyword,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -78,6 +82,16 @@ pub struct Loc {
     pub row: usize,
     pub col: usize,
     pub len: usize,
+}
+impl Loc {
+    pub fn null() -> Loc {
+        Loc {
+            file: "".to_string(),
+            row: 0,
+            col: 0,
+            len: 0,
+        }
+    }
 }
 
 pub fn span_locs(start: &Loc, end: &Loc) -> Loc {
@@ -113,7 +127,7 @@ fn take_while(line: &str, col: usize, mut predicate: impl FnMut(char) -> bool) -
     let mut result = String::new();
     let mut current_col = col;
 
-    while let Some(next_char) = line.chars().skip(current_col).next() {
+    while let Some(next_char) = line.chars().nth(current_col) {
         if predicate(next_char) {
             result.push(next_char);
             current_col += 1;
@@ -139,7 +153,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
         col = 0;
 
         while col < line.len() {
-            let c = line.chars().nth(col).unwrap();
+            let c = line.chars().nth(col).unwrap(); //Doesn't handle unicode
 
             if c.is_whitespace() {
                 col += 1;
@@ -148,7 +162,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
 
             match c {
                 '0'..='9' => {
-                    let int_literal = take_while(&line, col, |c| c.is_digit(10));
+                    let int_literal = take_while(&line, col, |c| c.is_ascii_digit());
                     col += int_literal.len();
 
                     // Check for a dot after parsing digits
@@ -158,7 +172,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                         && line.chars().nth(col + 1).unwrap() != '.'
                     {
                         col += 1; // Move past the dot
-                        let decimal_part = take_while(&line, col, |c| c.is_digit(10));
+                        let decimal_part = take_while(&line, col, |c| c.is_ascii_digit());
                         col += decimal_part.len();
 
                         let real_literal = format!("{}.{}", int_literal, decimal_part);
@@ -282,7 +296,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                     col += 1;
                 }
                 '/' => match line.chars().nth(col + 1) {
-                    Some(next_char) if next_char == '/' => {
+                    Some('/') => {
                         //Comment
                         row += 1;
                         break;
@@ -381,7 +395,10 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '.' => {
                     let (token_kind, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '.' => (TokenKind::DotDot, 2),
+                        Some('.') => match line.chars().nth(col + 2) {
+                            Some('.') => (TokenKind::DotDotDot, 3),
+                            _ => (TokenKind::DotDot, 2),
+                        },
                         _ => (TokenKind::Dot, 1),
                     };
 
@@ -400,8 +417,8 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '?' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '.' => (TokenKind::QuestionDot, "?.", 2),
-                        Some(next_char) if next_char == ':' => (TokenKind::QuestionColon, "?:", 2),
+                        Some('.') => (TokenKind::QuestionDot, "?.", 2),
+                        Some(':') => (TokenKind::QuestionColon, "?:", 2),
                         _ => (TokenKind::QuestionMark, "?", 1),
                     };
 
@@ -446,8 +463,8 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '=' => {
                     let (token_kind, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '=' => (TokenKind::EqualsEquals, 2),
-                        Some(next_char) if next_char == '>' => (TokenKind::FatArrow, 2),
+                        Some('=') => (TokenKind::EqualsEquals, 2),
+                        Some('>') => (TokenKind::FatArrow, 2),
                         _ => (TokenKind::Equals, 1),
                     };
 
@@ -466,9 +483,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '<' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '=' => {
-                            (TokenKind::OpenAngleEquals, "<=", 2)
-                        }
+                        Some('=') => (TokenKind::OpenAngleEquals, "<=", 2),
                         _ => (TokenKind::OpenAngle, "<", 1),
                     };
 
@@ -487,7 +502,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '!' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '=' => (TokenKind::BangEquals, "!=", 2),
+                        Some('=') => (TokenKind::BangEquals, "!=", 2),
                         _ => (TokenKind::Bang, "!", 1),
                     };
 
@@ -506,9 +521,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 '>' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == '=' => {
-                            (TokenKind::CloseAngleEquals, ">=", 2)
-                        }
+                        Some('=') => (TokenKind::CloseAngleEquals, ">=", 2),
                         _ => (TokenKind::CloseAngle, ">", 1),
                     };
 
@@ -527,7 +540,7 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                 }
                 ':' => {
                     let (token_kind, text, advance_by) = match line.chars().nth(col + 1) {
-                        Some(next_char) if next_char == ':' => (TokenKind::ColonColon, "::", 2),
+                        Some(':') => (TokenKind::ColonColon, "::", 2),
                         _ => (TokenKind::Colon, ":", 1),
                     };
                     tokens.push(Token::new(
@@ -577,8 +590,8 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
     Ok(tokens)
 }
 
-fn match_keyword(identifier: &String) -> Option<TokenKind> {
-    return match identifier.as_str() {
+fn match_keyword(identifier: &str) -> Option<TokenKind> {
+    match identifier {
         "true" => Some(TokenKind::TrueKeyword),
         "false" => Some(TokenKind::FalseKeyword),
         "and" => Some(TokenKind::AndKeyword),
@@ -598,6 +611,9 @@ fn match_keyword(identifier: &String) -> Option<TokenKind> {
         "enum" => Some(TokenKind::EnumKeyword),
         "match" => Some(TokenKind::MatchKeyword),
         "nil" => Some(TokenKind::NilKeyword),
+        "import" => Some(TokenKind::ImportKeyword),
+        "for" => Some(TokenKind::ForKeyword),
+        "in" => Some(TokenKind::InKeyword),
         _ => None,
-    };
+    }
 }
