@@ -342,6 +342,7 @@ impl CEmitter {
             CheckedExpressionKind::I16Literal { value } => write!(self.out_file, "{}", value),
             CheckedExpressionKind::I32Literal { value } => write!(self.out_file, "{}", value),
             CheckedExpressionKind::I64Literal { value } => write!(self.out_file, "{}", value),
+            CheckedExpressionKind::CharLiteral { value } => write!(self.out_file, "'{}'", value),
             CheckedExpressionKind::F32Literal { value } => write!(self.out_file, "{}", value),
             CheckedExpressionKind::F64Literal { value } => write!(self.out_file, "{}", value),
             CheckedExpressionKind::StringLiteral { value } => {

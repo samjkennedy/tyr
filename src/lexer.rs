@@ -8,6 +8,7 @@ use std::{
 pub enum LexError {
     IoError(io::Error),
     InvalidCharacter(char, Loc),
+    UnterminatedCharLiteral(Loc),
 }
 
 impl From<io::Error> for LexError {
@@ -19,6 +20,7 @@ impl From<io::Error> for LexError {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     IntLiteral,
+    CharLiteral,
     RealLiteral,
     StringLiteral,
     Identifier,
@@ -255,6 +257,35 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                             len: string_literal.len() + 2,
                         },
                     ));
+                }
+                '\'' => {
+                    col += 1; // Move past the opening quote
+
+                    if let Some(c) = line.chars().nth(col) {
+                        //TODO this is all assuming no escape characters
+                        col += 1;
+
+                        if let Some('\'') = line.chars().nth(col) {
+                            col += 1;
+                            tokens.push(Token::new(
+                                TokenKind::CharLiteral,
+                                c.to_string(),
+                                Loc {
+                                    file: file_path.to_string_lossy().into_owned(),
+                                    row,
+                                    col: col - 2, // Adjust col to the start of the char literal
+                                    len: 3,
+                                },
+                            ));
+                        } else {
+                            return Err(LexError::UnterminatedCharLiteral(Loc {
+                                file: file_path.to_string_lossy().into_owned(),
+                                row,
+                                col: col - 2, // Adjust col to the start of the char literal
+                                len: 3,
+                            }));
+                        }
+                    }
                 }
                 '+' => {
                     tokens.push(Token::new(

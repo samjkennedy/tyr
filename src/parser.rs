@@ -94,6 +94,9 @@ pub enum ExpressionKind {
     IntLiteral {
         token: Token,
     },
+    CharLiteral {
+        token: Token,
+    },
     RealLiteral {
         token: Token,
     },
@@ -206,6 +209,7 @@ impl Location for ExpressionKind {
         match self {
             ExpressionKind::BoolLiteral { token }
             | ExpressionKind::IntLiteral { token }
+            | ExpressionKind::CharLiteral { token }
             | ExpressionKind::RealLiteral { token }
             | ExpressionKind::StringLiteral { token } => token.loc.clone(),
             ExpressionKind::ArrayLiteral {
@@ -1401,6 +1405,11 @@ impl Parser {
                 }),
                 TokenKind::IntLiteral => Ok(Expression {
                     kind: ExpressionKind::IntLiteral {
+                        token: current_token.clone(),
+                    },
+                }),
+                TokenKind::CharLiteral => Ok(Expression {
+                    kind: ExpressionKind::CharLiteral {
                         token: current_token.clone(),
                     },
                 }),

@@ -1,4 +1,3 @@
-
 use std::path::Path;
 use std::process::Command;
 use std::{env, fs::File};
@@ -43,6 +42,12 @@ fn main() {
                 LexError::InvalidCharacter(c, loc) => eprintln!(
                     "Invalid character '{}' at {}:{}:{}",
                     c,
+                    loc.file,
+                    loc.row,
+                    loc.col + 1
+                ),
+                LexError::UnterminatedCharLiteral(loc) => eprintln!(
+                    "Unterminated character literal at {}:{}:{}",
                     loc.file,
                     loc.row,
                     loc.col + 1

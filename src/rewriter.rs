@@ -436,6 +436,7 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
         CheckedExpressionKind::I16Literal { value: _ } => Ok(expression),
         CheckedExpressionKind::I32Literal { value: _ } => Ok(expression),
         CheckedExpressionKind::I64Literal { value: _ } => Ok(expression),
+        CheckedExpressionKind::CharLiteral { value: _ } => Ok(expression),
         CheckedExpressionKind::F32Literal { value: _ } => Ok(expression),
         CheckedExpressionKind::F64Literal { value: _ } => Ok(expression),
         CheckedExpressionKind::StringLiteral { value: _ } => Ok(expression),
