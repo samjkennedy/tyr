@@ -1621,7 +1621,7 @@ impl TypeChecker {
                     Ok(_) => Ok(()),
                     Err(_) => Err(TypeCheckError::TypeMismatch {
                         expected: expected.clone(),
-                        actual: actual,
+                        actual,
                         loc: loc.clone(),
                     }),
                 };

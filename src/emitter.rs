@@ -370,7 +370,7 @@ impl CEmitter {
             }
             CheckedStatementKind::Break => writeln!(self.out_file, "break;")?,
             CheckedStatementKind::Continue => writeln!(self.out_file, "continue;")?,
-            CheckedStatementKind::Enum { name, variants } => (), //No need to emit enums again
+            CheckedStatementKind::Enum { name: _, variants: _ } => (), //No need to emit enums again
             CheckedStatementKind::MatchCases { cases } => {
                 for case in cases {
                     match &case.kind {
@@ -606,7 +606,7 @@ impl CEmitter {
                         writeln!(self.out_file, "}}")?;
                     }
                     TypeKind::DynamicArray(el_type) => {
-                        if elements.len() > 0 {
+                        if !elements.is_empty() {
                             todo!("default dynamic array initializers");
                         }
                         write!(self.out_file, "(da_{}){{NULL, 0, 0}}", el_type)?;
