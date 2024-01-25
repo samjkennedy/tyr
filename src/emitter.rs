@@ -297,7 +297,15 @@ impl CEmitter {
                 body,
             } => {
                 if name == "main" {
-                    write!(self.out_file, "int main() {{")?;
+                    if args.is_empty() {
+                        write!(self.out_file, "int main() {{")?;
+                    } else {
+                        write!(self.out_file, "int main(int argc, char **argv) {{")?;
+                        write!(
+                            self.out_file,
+                            "sl_string args = (sl_string){{argv, 0, argc}};"
+                        )?;
+                    }
                     if let CheckedStatementKind::Block { statements } = &body.kind {
                         for statement in statements {
                             self.emit_statement(statement)?;

@@ -1453,7 +1453,16 @@ impl TypeChecker {
                     type_expression_kind,
                 } = &type_annotation.kind
                 {
-                    checked_args.push(self.scope.try_get_type(type_expression_kind)?)
+                    let arg_type = self.scope.try_get_type(type_expression_kind)?;
+
+                    match &arg_type {
+                        TypeKind::DynamicArray(el_type) | TypeKind::Slice(el_type) => {
+                            self.declare_slice_type(el_type);
+                        }
+                        _ => (),
+                    }
+
+                    checked_args.push(arg_type)
                 } else {
                     unreachable!()
                 }
@@ -2341,43 +2350,12 @@ impl TypeChecker {
                     TypeKind::Array(_, el_type)
                     | TypeKind::Slice(el_type)
                     | TypeKind::DynamicArray(el_type) => {
+                        self.scope.assign_context.push(TypeKind::U32);
                         let checked_index = self.type_check_expression(index)?;
+                        self.scope.assign_context.pop();
 
                         if let TypeKind::Range(_) = &checked_index.type_kind {
-                            let mut declare_new_type: bool = true;
-                            for type_kind in &self.module.types {
-                                if let TypeKind::Record(name, ..) = type_kind {
-                                    if name == &format!("sl_{}", el_type) {
-                                        declare_new_type = false;
-                                        break;
-                                    }
-                                }
-                            }
-                            if declare_new_type {
-                                self.module.types.push(TypeKind::Record(
-                                    format!("sl_{}", el_type),
-                                    vec![],
-                                    vec![
-                                        CheckedVariable {
-                                            name: "data".to_string(),
-                                            type_kind: TypeKind::Pointer(Box::new(
-                                                *el_type.clone(),
-                                            )),
-                                            declaration_loc: Loc::null(),
-                                        },
-                                        CheckedVariable {
-                                            name: "offset".to_string(),
-                                            type_kind: TypeKind::U16,
-                                            declaration_loc: Loc::null(),
-                                        },
-                                        CheckedVariable {
-                                            name: "count".to_string(),
-                                            type_kind: TypeKind::U16,
-                                            declaration_loc: Loc::null(),
-                                        },
-                                    ],
-                                ));
-                            }
+                            self.declare_slice_type(el_type);
                             return Ok(CheckedExpression {
                                 kind: CheckedExpressionKind::ArrayIndex {
                                     array: Box::new(checked_array),
@@ -2918,6 +2896,41 @@ impl TypeChecker {
             }
             Err(e) => Err(e.clone()),
         };
+    }
+
+    fn declare_slice_type(&mut self, el_type: &TypeKind) {
+        let mut declare_new_type: bool = true;
+        for type_kind in &self.module.types {
+            if let TypeKind::Record(name, ..) = type_kind {
+                if name == &format!("sl_{}", el_type) {
+                    declare_new_type = false;
+                    break;
+                }
+            }
+        }
+        if declare_new_type {
+            self.module.types.push(TypeKind::Record(
+                format!("sl_{}", el_type),
+                vec![],
+                vec![
+                    CheckedVariable {
+                        name: "data".to_string(),
+                        type_kind: TypeKind::Pointer(Box::new(el_type.clone())),
+                        declaration_loc: Loc::null(),
+                    },
+                    CheckedVariable {
+                        name: "offset".to_string(),
+                        type_kind: TypeKind::U16,
+                        declaration_loc: Loc::null(),
+                    },
+                    CheckedVariable {
+                        name: "count".to_string(),
+                        type_kind: TypeKind::U16,
+                        declaration_loc: Loc::null(),
+                    },
+                ],
+            ));
+        }
     }
 
     fn is_integer_type(kind: &TypeKind) -> bool {
