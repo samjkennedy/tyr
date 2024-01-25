@@ -82,7 +82,41 @@ impl CEmitter {
             
             #define SAFE_DEREF(x) \
             ((x) ? *(x) : (exit(1), *(x)))
-    
+            #define DA_APPEND(arr, x) \
+            do { \
+                if ((arr).count == (arr).capacity) { \
+                    (arr).capacity = ((arr).capacity == 0) ? 1 : (arr).capacity * 2; \
+                    (arr).data = realloc((arr).data, (arr).capacity * sizeof(*(arr).data)); \
+                    if (!(arr).data) { \
+                        perror(\"Failed to allocate memory for dynamic array\"); \
+                        exit(EXIT_FAILURE); \
+                    } \
+                } \
+                (arr).data[(arr).count++] = (x); \
+            } while (0)
+        
+        
+        #define DA_INIT(type, ...) \
+        ({ \
+            da_##type arr; \
+            arr.data = NULL; \
+            arr.count = 0; \
+            arr.capacity = 0; \
+            type init_values[] = {__VA_ARGS__}; \
+            for (int i = 0; i < sizeof(init_values) / sizeof(init_values[0]); ++i) { \
+                DA_APPEND(arr, init_values[i]); \
+            } \
+            arr; \
+        })
+        
+        #define DA_CLEAR(arr) \
+            ((arr).count = 0)
+        
+        #define DA_IS_EMPTY(arr) \
+            ((arr).count == 0)
+
+        #define DA_POP(arr) \
+            ((arr).count > 0 ? (arr).data[--(arr).count] : 0)
     ",
         )?;
         //TODO: When slices are a thing, use this struct?
@@ -94,8 +128,34 @@ impl CEmitter {
         //             size_t len;
         //     } Tyr_Slice;",
         // )?;
-
-        for type_kind in module.types {
+        // for type_kind in &module.types {
+        //     match type_kind {
+        //         TypeKind::Record(name, generic_params, _) => {
+        //             if !generic_params.is_empty() {
+        //                 writeln!(
+        //                     self.out_file,
+        //                     "typedef struct {}_{}, {}_{};",
+        //                     name,
+        //                     generic_params
+        //                         .iter()
+        //                         .map(Self::get_c_type)
+        //                         .collect::<Vec<String>>()
+        //                         .join("_"),
+        //                     name,
+        //                     generic_params
+        //                         .iter()
+        //                         .map(Self::get_c_type)
+        //                         .collect::<Vec<String>>()
+        //                         .join("_")
+        //                 )?;
+        //             } else {
+        //                 writeln!(self.out_file, "typedef struct {} {};", name, name)?;
+        //             }
+        //         }
+        //         _ => todo!("emit module type kind: {}", type_kind),
+        //     }
+        // }
+        for type_kind in &module.types {
             match type_kind {
                 TypeKind::Record(name, generic_params, members) => {
                     if !generic_params.is_empty() {
@@ -139,6 +199,25 @@ impl CEmitter {
                         }
                         writeln!(self.out_file, "}} {};", name)?;
                     }
+                }
+                TypeKind::Enum(name, variants) => {
+                    //values array for printing
+                    writeln!(
+                        self.out_file,
+                        "const char *{}_values[{}] = {{",
+                        name,
+                        variants.len()
+                    )?;
+                    for variant in variants {
+                        writeln!(self.out_file, "\"{}\",", variant)?;
+                    }
+                    writeln!(self.out_file, "}};")?;
+                    //struct typedef
+                    writeln!(self.out_file, "typedef enum {} {{", name)?;
+                    for variant in variants {
+                        writeln!(self.out_file, "{}_{},", name, variant)?;
+                    }
+                    writeln!(self.out_file, "}} {};", name)?;
                 }
                 _ => todo!("emit module type kind: {}", type_kind),
             }
@@ -291,13 +370,7 @@ impl CEmitter {
             }
             CheckedStatementKind::Break => writeln!(self.out_file, "break;")?,
             CheckedStatementKind::Continue => writeln!(self.out_file, "continue;")?,
-            CheckedStatementKind::Enum { name, variants } => {
-                writeln!(self.out_file, "typedef enum {} {{", name)?;
-                for variant in variants {
-                    writeln!(self.out_file, "{}_{},", name, variant)?;
-                }
-                writeln!(self.out_file, "}} {};", name)?;
-            }
+            CheckedStatementKind::Enum { name, variants } => (), //No need to emit enums again
             CheckedStatementKind::MatchCases { cases } => {
                 for case in cases {
                     match &case.kind {
@@ -416,7 +489,13 @@ impl CEmitter {
                         "\"{}\", ",
                         Self::get_print_format_for_type(&arg.type_kind)
                     )?;
-                    self.emit_expression(arg)?;
+                    if let TypeKind::Enum(name, _) = &arg.type_kind {
+                        write!(self.out_file, "{}_values[", name)?;
+                        self.emit_expression(arg)?;
+                        write!(self.out_file, "]")?;
+                    } else {
+                        self.emit_expression(arg)?;
+                    }
                     write!(self.out_file, ")")?;
                     return Ok(());
                 }
@@ -428,10 +507,44 @@ impl CEmitter {
                         "\"{}\\n\", ",
                         Self::get_print_format_for_type(&arg.type_kind)
                     )?;
-                    self.emit_expression(arg)?;
+                    if let TypeKind::Enum(name, _) = &arg.type_kind {
+                        write!(self.out_file, "{}_values[", name)?;
+                        self.emit_expression(arg)?;
+                        write!(self.out_file, "]")?;
+                    } else {
+                        self.emit_expression(arg)?;
+                    }
                     write!(self.out_file, ")")?;
                     return Ok(());
                 }
+                //Dynamic arrays
+                if name == "append" {
+                    write!(self.out_file, "DA_APPEND(")?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, ", (")?;
+                    self.emit_expression(&args[1])?;
+                    write!(self.out_file, "))")?;
+                    return Ok(());
+                }
+                if name == "is_empty" {
+                    write!(self.out_file, "DA_IS_EMPTY(")?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, ")")?;
+                    return Ok(());
+                }
+                if name == "clear" {
+                    write!(self.out_file, "DA_CLEAR(")?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, ")")?;
+                    return Ok(());
+                }
+                if name == "pop" {
+                    write!(self.out_file, "DA_POP(")?;
+                    self.emit_expression(&args[0])?;
+                    write!(self.out_file, ")")?;
+                    return Ok(());
+                }
+                //Files
                 if name == "open_file" {
                     write!(self.out_file, "fopen(")?;
                     self.emit_expression(&args[0])?;
@@ -480,15 +593,26 @@ impl CEmitter {
                 Ok(())
             }
             CheckedExpressionKind::ArrayLiteral { elements } => {
-                write!(self.out_file, "{{")?;
-                for (i, element) in elements.iter().enumerate() {
-                    self.emit_expression(element)?;
+                match &expression.type_kind {
+                    TypeKind::Array(_size, _el_type) => {
+                        write!(self.out_file, "{{")?;
+                        for (i, element) in elements.iter().enumerate() {
+                            self.emit_expression(element)?;
 
-                    if i < elements.len() - 1 {
-                        write!(self.out_file, ", ")?;
+                            if i < elements.len() - 1 {
+                                write!(self.out_file, ", ")?;
+                            }
+                        }
+                        writeln!(self.out_file, "}}")?;
                     }
+                    TypeKind::DynamicArray(el_type) => {
+                        if elements.len() > 0 {
+                            todo!("default dynamic array initializers");
+                        }
+                        write!(self.out_file, "(da_{}){{NULL, 0, 0}}", el_type)?;
+                    }
+                    _ => unreachable!(),
                 }
-                writeln!(self.out_file, "}}")?;
 
                 Ok(())
             }
@@ -499,6 +623,13 @@ impl CEmitter {
                 // writeln!(self.out_file, ", ")?;
                 // self.emit_expression(&index)?;
                 // writeln!(self.out_file, ")")?;
+                if let TypeKind::DynamicArray(_) = array.type_kind {
+                    self.emit_expression(array)?;
+                    writeln!(self.out_file, ".data[")?;
+                    self.emit_expression(index)?;
+                    writeln!(self.out_file, "]")?;
+                    return Ok(());
+                }
                 self.emit_expression(array)?;
                 writeln!(self.out_file, "[")?;
                 self.emit_expression(index)?;
@@ -580,6 +711,14 @@ impl CEmitter {
                     unreachable!()
                 }
             }
+            CheckedExpressionKind::Cast {
+                expression,
+                type_kind,
+            } => {
+                write!(self.out_file, "({}) ", Self::get_c_type(type_kind))?;
+                self.emit_expression(expression)?;
+                Ok(())
+            }
         }
     }
 
@@ -627,6 +766,10 @@ impl CEmitter {
                 TypeKind::File => format!("{} ", Self::get_c_type(base_type)),
                 _ => format!("{} *", Self::get_c_type(base_type)),
             },
+            TypeKind::DynamicArray(el_type) => {
+                format!("da_{}", el_type)
+            }
+            TypeKind::Pointer(base_type) => format!("{} *", Self::get_c_type(base_type)),
         }
     }
 
@@ -657,9 +800,13 @@ impl CEmitter {
             TypeKind::String => format!("char* {}", param_name),
             TypeKind::Range(_) => todo!(),
             TypeKind::GenericParameter(_) => todo!(),
-            TypeKind::File => "FILE *".to_string(),
+            TypeKind::File => format!("FILE *{}", param_name),
             TypeKind::Optional(base_type) => {
                 format!("{} {}", Self::get_c_type(base_type), param_name)
+            }
+            TypeKind::DynamicArray(el_type) => format!("da_{} {}", el_type, param_name),
+            TypeKind::Pointer(base_type) => {
+                format!("{} *{}", Self::get_c_type(base_type), param_name)
             }
         }
     }
@@ -671,7 +818,7 @@ impl CEmitter {
             TypeKind::Array(_, _) => todo!(),
             TypeKind::Slice(_) => todo!(),
             TypeKind::Record(_, _, _) => todo!(),
-            TypeKind::Enum(_, _) => "%d".to_string(),
+            TypeKind::Enum(_, _) => "%s".to_string(),
             TypeKind::U8 => "%hhu".to_string(),
             TypeKind::U16 => "%hu".to_string(),
             TypeKind::U32 => "%lu".to_string(),
@@ -688,6 +835,8 @@ impl CEmitter {
             TypeKind::GenericParameter(_) => todo!(),
             TypeKind::File => "%zu".to_string(),
             TypeKind::Optional(base_type) => Self::get_print_format_for_type(base_type),
+            TypeKind::DynamicArray(_) => todo!(),
+            TypeKind::Pointer(_) => "%zu".to_string(),
         }
     }
 }

@@ -12,9 +12,9 @@ enum TrafficLight {
 
 function print_color(c: Color) {
     match c {
-        Color::Red => print("Red"),
-        Color::Green => print("Green"),
-        Color::Blue => print("Blue"),
+        Color::Red => println("Red"),
+        Color::Green => println("Green"),
+        Color::Blue => println("Blue"),
     }
 }
 
@@ -22,7 +22,7 @@ function main() {
     var c = Color::Red;
 
     print_color(c);
-    print_color(Color::Blue);
+    println(Color::Blue);
 
     c = Color::Green;
     c.print_color();

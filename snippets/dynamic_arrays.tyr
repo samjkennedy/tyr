@@ -1,0 +1,63 @@
+function print_da(da: [dynamic]i32) {
+    println("data:");
+    for e in da {
+        println(e);
+    }
+    println("count:");
+    println(da.count);
+    println("capacity:");
+    println(da.capacity);
+}
+
+function test1() {
+    var a = [5]i32 {42, 27, 13, 66, 18};
+    var da = [dynamic]i32 {};
+
+    for i in a {
+        da.append(i);
+    }
+
+    da.print_da();
+    println("------");
+    for i in da {
+        println(i);
+    }
+
+    var df = [dynamic]f32 {};
+    df.append(66.5);
+    df.append(45.2);
+
+    println("------");
+    for f in df {
+        println(f);
+    }
+
+    println("------");
+    da.clear();
+    println(da.is_empty());
+    for i in da {
+        println(i);
+    }
+    println("------");
+    da.print_da();
+}
+
+function main() {
+    var da = [dynamic]i32{};
+
+    da.append(10);
+    da.append(17);
+    da.append(24);
+
+    var x = da.pop();
+
+    println(x);
+    for i in da {
+        println(i);
+    }
+    da.clear();
+    da.append(18); 
+    for i in da {
+        println(i);
+    }
+}
