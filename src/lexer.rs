@@ -76,6 +76,8 @@ pub enum TokenKind {
     QuestionDot,
     QuestionColon,
     ImportKeyword,
+    DynamicKeyword,
+    AsKeyword,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -645,6 +647,8 @@ fn match_keyword(identifier: &str) -> Option<TokenKind> {
         "import" => Some(TokenKind::ImportKeyword),
         "for" => Some(TokenKind::ForKeyword),
         "in" => Some(TokenKind::InKeyword),
+        "dynamic" => Some(TokenKind::DynamicKeyword),
+        "as" => Some(TokenKind::AsKeyword),
         _ => None,
     }
 }

@@ -4,12 +4,84 @@ enum TokenKind {
     Minus,
     Star,
     Slash,
+    OpenParen,
+    CloseParen,
+}
+
+record Token {
+    kind: TokenKind,
+    operand: i32,
+}
+
+function is_numeric(c: char): bool {
+    return c >= 48 and c <= 57;
+}
+
+function parse_i32(c: char): i32 {
+    if not c.is_numeric() {
+        return -1;
+    }
+    return (c - 48) as i32;
+}
+
+function lex(f: File): [dynamic]Token {
+
+    var tokens = [dynamic]Token{};
+
+    var c = f.read_char();
+    var i = 0;
+    while -1 != c {
+
+        if c == '+' {
+            tokens.append(Token { TokenKind::Plus, 0 } );
+        } else if c == '-' {
+            tokens.append(Token { TokenKind::Minus, 0 } );
+        } else if c == '*' {
+            tokens.append(Token { TokenKind::Star, 0 } );
+        } else if c == '/' {
+            tokens.append(Token { TokenKind::Slash, 0 } );
+        } else if c == '(' {
+            tokens.append(Token { TokenKind::OpenParen, 0 } );
+        } else if c == ')' {
+            tokens.append(Token { TokenKind::CloseParen, 0 } );
+        } else if c.is_numeric() {
+            var n = c.parse_i32();
+            c = f.read_char();
+
+            while c.is_numeric() {
+                n = n * 10;
+                n = n + c.parse_i32();
+                c = f.read_char();
+            }
+            tokens.append(Token { TokenKind::IntLiteral, n } );
+            continue;
+        } else if c == ' ' {
+            c = f.read_char();
+            continue;
+        }
+
+        c = f.read_char();
+        i = i + 1;
+    }
+
+    return tokens;
 }
 
 function main() {
-    var f = file_open("test.txt", "r")!;
+    var f = open_file("selfhost/test.txt", "r")!;
 
-    while not f.eof() {
-        print(f.read_char());
+    var tokens = lex(f);
+
+    print("Parsed ");
+    print(tokens.count);
+    println(" tokens:");
+
+    for token in tokens {
+        print(token.kind);
+        if token.kind == TokenKind::IntLiteral {
+            print(" - ");
+            print(token.operand);
+        }
+        println("");
     }
 }

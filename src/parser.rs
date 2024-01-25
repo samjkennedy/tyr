@@ -198,6 +198,11 @@ pub enum ExpressionKind {
         expression: Box<Expression>,
         bang: Token,
     },
+    Cast {
+        expression: Box<Expression>,
+        as_keyword: Token,
+        type_expression: TypeExpressionKind,
+    },
 }
 
 pub trait Location {
@@ -294,6 +299,11 @@ impl Location for ExpressionKind {
                 question_colon: _,
                 default,
             } => span_locs(&optional.kind.get_loc(), &default.kind.get_loc()),
+            ExpressionKind::Cast {
+                expression,
+                as_keyword: _,
+                type_expression,
+            } => span_locs(&expression.kind.get_loc(), &type_expression.get_loc()),
         }
     }
 }
@@ -332,6 +342,12 @@ pub enum TypeExpressionKind {
         question_mark: Token,
         base_type: Box<TypeExpressionKind>,
     },
+    DynamicArray {
+        open_square: Token,
+        dynamic_keyword: Token,
+        close_square: Token,
+        element_type: Box<TypeExpressionKind>,
+    },
 }
 
 impl Location for TypeExpressionKind {
@@ -363,6 +379,12 @@ impl Location for TypeExpressionKind {
                 question_mark,
                 base_type,
             } => span_locs(&question_mark.loc, &base_type.get_loc()),
+            TypeExpressionKind::DynamicArray {
+                open_square,
+                dynamic_keyword: _,
+                close_square: _,
+                element_type,
+            } => span_locs(&open_square.loc, &element_type.get_loc()),
         }
     }
 }
@@ -904,6 +926,18 @@ impl Parser {
                                 element_type: Box::new(element_type_kind),
                             })
                         }
+                        TokenKind::DynamicKeyword => {
+                            let dynamic_keyword = next;
+                            let close_square = Self::expect_token(tokens, TokenKind::CloseSquare)?;
+                            let element_type_kind = Self::parse_type_expression_kind(tokens)?;
+
+                            Ok(TypeExpressionKind::DynamicArray {
+                                open_square: open_square.clone(),
+                                dynamic_keyword,
+                                close_square,
+                                element_type: Box::new(element_type_kind),
+                            })
+                        }
                         _ => Err(ParseError::UnexpectedToken(next)),
                     }
                 }
@@ -1087,6 +1121,7 @@ impl Parser {
                             }
                             _ => return Err(ParseError::CannotStaticallyAccess(left)),
                         },
+                        TokenKind::AsKeyword => left = self.parse_cast(left, tokens)?,
                         _ => return Ok(left),
                     };
                     continue;
@@ -1338,6 +1373,23 @@ impl Parser {
 
         Ok(Statement {
             kind: StatementKind::MatchCases { cases },
+        })
+    }
+
+    fn parse_cast(
+        &self,
+        expression: Expression,
+        tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
+    ) -> Result<Expression, ParseError> {
+        let as_keyword = Self::expect_token(tokens, TokenKind::AsKeyword)?;
+        let type_expression_kind = Self::parse_type_expression_kind(tokens)?;
+
+        Ok(Expression {
+            kind: ExpressionKind::Cast {
+                expression: Box::new(expression),
+                as_keyword,
+                type_expression: type_expression_kind,
+            },
         })
     }
 
