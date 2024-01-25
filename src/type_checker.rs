@@ -1339,26 +1339,9 @@ impl TypeChecker {
                             },
                         })
                     }
-                    TypeKind::Array(_, inner_type) => {
-                        let checked_iterator = CheckedVariable {
-                            name: iterator.text.clone(),
-                            type_kind: *inner_type.clone(),
-                            declaration_loc: iterator.loc.clone(),
-                        };
-                        self.scope
-                            .try_declare_variable(checked_iterator.clone(), iterator.loc.clone())?;
-
-                        let checked_body = self.type_check_statement(body)?;
-
-                        Ok(CheckedStatement {
-                            kind: CheckedStatementKind::ForIn {
-                                iterator: checked_iterator,
-                                iterable: checked_iterable,
-                                body: Box::new(checked_body),
-                            },
-                        })
-                    }
-                    TypeKind::DynamicArray(inner_type) => {
+                    TypeKind::Array(_, inner_type)
+                    | TypeKind::Slice(inner_type)
+                    | TypeKind::DynamicArray(inner_type) => {
                         let checked_iterator = CheckedVariable {
                             name: iterator.text.clone(),
                             type_kind: *inner_type.clone(),
@@ -2360,6 +2343,51 @@ impl TypeChecker {
                     | TypeKind::DynamicArray(el_type) => {
                         let checked_index = self.type_check_expression(index)?;
 
+                        if let TypeKind::Range(_) = &checked_index.type_kind {
+                            let mut declare_new_type: bool = true;
+                            for type_kind in &self.module.types {
+                                if let TypeKind::Record(name, ..) = type_kind {
+                                    if name == &format!("sl_{}", el_type) {
+                                        declare_new_type = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if declare_new_type {
+                                self.module.types.push(TypeKind::Record(
+                                    format!("sl_{}", el_type),
+                                    vec![],
+                                    vec![
+                                        CheckedVariable {
+                                            name: "data".to_string(),
+                                            type_kind: TypeKind::Pointer(Box::new(
+                                                *el_type.clone(),
+                                            )),
+                                            declaration_loc: Loc::null(),
+                                        },
+                                        CheckedVariable {
+                                            name: "offset".to_string(),
+                                            type_kind: TypeKind::U16,
+                                            declaration_loc: Loc::null(),
+                                        },
+                                        CheckedVariable {
+                                            name: "count".to_string(),
+                                            type_kind: TypeKind::U16,
+                                            declaration_loc: Loc::null(),
+                                        },
+                                    ],
+                                ));
+                            }
+                            return Ok(CheckedExpression {
+                                kind: CheckedExpressionKind::ArrayIndex {
+                                    array: Box::new(checked_array),
+                                    index: Box::new(checked_index),
+                                },
+                                type_kind: TypeKind::Slice(el_type.clone()),
+                                loc: index.kind.get_loc().clone(),
+                            });
+                        }
+
                         if !Self::is_integer_type(&checked_index.type_kind) {
                             return Err(TypeCheckError::TypeMismatch {
                                 expected: TypeKind::U32,
@@ -2596,6 +2624,43 @@ impl TypeChecker {
                             });
                         }
                     },
+                    TypeKind::Slice(_) => match member_name.as_str() {
+                        "count" => {
+                            return Ok(CheckedExpression {
+                                kind: CheckedExpressionKind::Accessor {
+                                    accessee: Box::new(checked_accessee),
+                                    member: member_name.to_string(),
+                                },
+                                type_kind: TypeKind::U32,
+                                loc: dot.loc.clone(),
+                            });
+                        }
+                        _ => {
+                            return Err(TypeCheckError::NoSuchMember {
+                                member_name: member_name.to_string(),
+                                name: member_name.to_string(),
+                                loc: member_identifier.loc.clone(),
+                            });
+                        }
+                    },
+                    TypeKind::Array(size, _) => match member_name.as_str() {
+                        "count" => {
+                            return Ok(CheckedExpression {
+                                kind: CheckedExpressionKind::U32Literal {
+                                    value: *size as u32,
+                                },
+                                type_kind: TypeKind::U32,
+                                loc: dot.loc.clone(),
+                            });
+                        }
+                        _ => {
+                            return Err(TypeCheckError::NoSuchMember {
+                                member_name: member_name.to_string(),
+                                name: member_name.to_string(),
+                                loc: member_identifier.loc.clone(),
+                            });
+                        }
+                    },
                     _ => (),
                 }
                 Err(TypeCheckError::CannotAccessType {
@@ -2647,6 +2712,7 @@ impl TypeChecker {
                 dotdot: _,
                 upper,
             } => {
+                self.scope.assign_context.push(TypeKind::U32);
                 let checked_lower = self.type_check_expression(lower)?;
 
                 if !Self::is_number_type(&checked_lower.type_kind) {
@@ -2658,6 +2724,8 @@ impl TypeChecker {
                 }
 
                 let checked_upper = self.type_check_expression(upper)?;
+
+                self.scope.assign_context.pop();
 
                 self.expect_type(
                     checked_lower.type_kind.clone(),

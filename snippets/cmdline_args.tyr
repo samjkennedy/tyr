@@ -1,0 +1,5 @@
+function main(args: []string) {
+    for arg in args {
+        println(arg);
+    }
+}

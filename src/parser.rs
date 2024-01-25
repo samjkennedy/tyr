@@ -276,10 +276,10 @@ impl Location for ExpressionKind {
                 member_identifier,
             } => span_locs(&accessee.kind.get_loc(), &member_identifier.loc),
             ExpressionKind::Range {
-                lower: _,
+                lower,
                 dotdot: _,
-                upper: _,
-            } => todo!(),
+                upper,
+            } => span_locs(&lower.kind.get_loc(), &upper.kind.get_loc()),
             ExpressionKind::StaticAccessor {
                 namespace,
                 colon_colon: _,
@@ -361,10 +361,10 @@ impl Location for TypeExpressionKind {
                 element_type,
             } => span_locs(&open_square.loc, &element_type.get_loc()),
             TypeExpressionKind::Slice {
-                open_square: _,
+                open_square,
                 close_square: _,
-                element_type: _,
-            } => todo!(),
+                element_type,
+            } => span_locs(&open_square.loc, &element_type.get_loc()),
             TypeExpressionKind::Generic {
                 generic_type,
                 open_angle: _,

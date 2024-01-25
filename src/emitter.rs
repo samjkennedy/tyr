@@ -370,7 +370,10 @@ impl CEmitter {
             }
             CheckedStatementKind::Break => writeln!(self.out_file, "break;")?,
             CheckedStatementKind::Continue => writeln!(self.out_file, "continue;")?,
-            CheckedStatementKind::Enum { name: _, variants: _ } => (), //No need to emit enums again
+            CheckedStatementKind::Enum {
+                name: _,
+                variants: _,
+            } => (), //No need to emit enums again
             CheckedStatementKind::MatchCases { cases } => {
                 for case in cases {
                     match &case.kind {
@@ -474,7 +477,6 @@ impl CEmitter {
                 //     writeln!(self.out_file, ")")?;
                 //     return Ok(());
                 // }
-
                 self.emit_expression(lhs)?;
                 write!(self.out_file, " = ")?;
                 self.emit_expression(rhs)?;
@@ -623,13 +625,53 @@ impl CEmitter {
                 // writeln!(self.out_file, ", ")?;
                 // self.emit_expression(&index)?;
                 // writeln!(self.out_file, ")")?;
-                if let TypeKind::DynamicArray(_) = array.type_kind {
+                if let TypeKind::DynamicArray(el_type) = &array.type_kind {
+                    if let CheckedExpressionKind::Range { lower, upper } = &index.kind {
+                        //(sl_u32){array, 1, 5 - 3}
+                        write!(self.out_file, "(sl_{})", el_type)?;
+                        write!(self.out_file, "{{")?;
+                        self.emit_expression(array)?;
+                        write!(self.out_file, ".data , ")?;
+                        self.emit_expression(&lower)?;
+                        write!(self.out_file, ", ")?;
+                        self.emit_expression(&upper)?;
+                        write!(self.out_file, " - ")?;
+                        self.emit_expression(&lower)?;
+                        write!(self.out_file, "}}")?;
+                        return Ok(());
+                    }
                     self.emit_expression(array)?;
-                    writeln!(self.out_file, ".data[")?;
+                    write!(self.out_file, ".data[")?;
                     self.emit_expression(index)?;
-                    writeln!(self.out_file, "]")?;
+                    write!(self.out_file, "]")?;
                     return Ok(());
                 }
+                if let TypeKind::Slice(_) = array.type_kind {
+                    self.emit_expression(array)?;
+                    write!(self.out_file, ".data[")?;
+                    self.emit_expression(index)?;
+                    write!(self.out_file, " + ")?;
+                    self.emit_expression(array)?;
+                    write!(self.out_file, ".offset]")?;
+                    return Ok(());
+                }
+                if let TypeKind::Array(_, el_type) = &array.type_kind {
+                    if let CheckedExpressionKind::Range { lower, upper } = &index.kind {
+                        //(sl_u32){array, 1, 5 - 3}
+                        write!(self.out_file, "(sl_{})", el_type)?;
+                        write!(self.out_file, "{{")?;
+                        self.emit_expression(array)?;
+                        write!(self.out_file, ", ")?;
+                        self.emit_expression(&lower)?;
+                        write!(self.out_file, ", ")?;
+                        self.emit_expression(&upper)?;
+                        write!(self.out_file, " - ")?;
+                        self.emit_expression(&lower)?;
+                        write!(self.out_file, "}}")?;
+                        return Ok(());
+                    }
+                }
+
                 self.emit_expression(array)?;
                 writeln!(self.out_file, "[")?;
                 self.emit_expression(index)?;
@@ -756,7 +798,7 @@ impl CEmitter {
                 format!("{} [{}]", Self::get_c_type(el_type), el_count)
             }
             TypeKind::Slice(el_type) => {
-                format!("{}* ", Self::get_c_type(el_type))
+                format!("sl_{} ", el_type)
             }
             TypeKind::String => "char*".to_string(),
             TypeKind::Range(_) => todo!(),
@@ -795,7 +837,7 @@ impl CEmitter {
             }
             TypeKind::Slice(el_type) => {
                 //TODO: should be a wide pointer really
-                format!("{} *{}", Self::get_c_type(el_type), param_name)
+                format!("sl_{} {}", el_type, param_name)
             }
             TypeKind::String => format!("char* {}", param_name),
             TypeKind::Range(_) => todo!(),
