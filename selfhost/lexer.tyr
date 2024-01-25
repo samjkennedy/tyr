@@ -67,8 +67,12 @@ function lex(f: File): [dynamic]Token {
     return tokens;
 }
 
-function main() {
-    var f = open_file("selfhost/test.txt", "r")!;
+function main(args: []string) {
+    if args.count == 1 {
+        println("Please provide file to parse");
+        return;
+    }
+    var f = open_file(args[1], "r")!;
 
     var tokens = lex(f);
 
