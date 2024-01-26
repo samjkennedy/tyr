@@ -823,9 +823,9 @@ fn create_file_module(scope: &mut Scope) {
 
 fn create_dynamic_arrays_module(scope: &mut Scope) {
     scope.functions.insert(
-        "append".to_owned(),
+        "push".to_owned(),
         CheckedFunction {
-            name: "append".to_owned(),
+            name: "push".to_owned(),
             generic_params: vec!["T".to_string()],
             args: vec![
                 TypeKind::DynamicArray(Box::new(TypeKind::GenericParameter("T".to_string()))),

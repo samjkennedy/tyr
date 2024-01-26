@@ -33,17 +33,17 @@ function lex(f: File): [dynamic]Token {
     while -1 != c {
 
         if c == '+' {
-            tokens.append(Token { TokenKind::Plus, 0 } );
+            tokens.push(Token { TokenKind::Plus, 0 } );
         } else if c == '-' {
-            tokens.append(Token { TokenKind::Minus, 0 } );
+            tokens.push(Token { TokenKind::Minus, 0 } );
         } else if c == '*' {
-            tokens.append(Token { TokenKind::Star, 0 } );
+            tokens.push(Token { TokenKind::Star, 0 } );
         } else if c == '/' {
-            tokens.append(Token { TokenKind::Slash, 0 } );
+            tokens.push(Token { TokenKind::Slash, 0 } );
         } else if c == '(' {
-            tokens.append(Token { TokenKind::OpenParen, 0 } );
+            tokens.push(Token { TokenKind::OpenParen, 0 } );
         } else if c == ')' {
-            tokens.append(Token { TokenKind::CloseParen, 0 } );
+            tokens.push(Token { TokenKind::CloseParen, 0 } );
         } else if c.is_numeric() {
             var n = c.parse_i32();
             c = f.read_char();
@@ -53,7 +53,7 @@ function lex(f: File): [dynamic]Token {
                 n = n + c.parse_i32();
                 c = f.read_char();
             }
-            tokens.append(Token { TokenKind::IntLiteral, n } );
+            tokens.push(Token { TokenKind::IntLiteral, n } );
             continue;
         } else if c == ' ' {
             c = f.read_char();

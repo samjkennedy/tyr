@@ -82,7 +82,7 @@ impl CEmitter {
             
             #define SAFE_DEREF(x) \
             ((x) ? *(x) : (exit(1), *(x)))
-            #define DA_APPEND(arr, x) \
+            #define DA_PUSH(arr, x) \
             do { \
                 if ((arr).count == (arr).capacity) { \
                     (arr).capacity = ((arr).capacity == 0) ? 1 : (arr).capacity * 2; \
@@ -104,7 +104,7 @@ impl CEmitter {
             arr.capacity = 0; \
             type init_values[] = {__VA_ARGS__}; \
             for (int i = 0; i < sizeof(init_values) / sizeof(init_values[0]); ++i) { \
-                DA_APPEND(arr, init_values[i]); \
+                DA_PUSH(arr, init_values[i]); \
             } \
             arr; \
         })
@@ -528,8 +528,8 @@ impl CEmitter {
                     return Ok(());
                 }
                 //Dynamic arrays
-                if name == "append" {
-                    write!(self.out_file, "DA_APPEND(")?;
+                if name == "push" {
+                    write!(self.out_file, "DA_PUSH(")?;
                     self.emit_expression(&args[0])?;
                     write!(self.out_file, ", (")?;
                     self.emit_expression(&args[1])?;
