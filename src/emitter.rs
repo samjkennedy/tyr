@@ -6,8 +6,8 @@ use std::{
 use crate::{
     parser::BinaryOpKind,
     type_checker::{
-        CheckedExpression, CheckedExpressionKind, CheckedStatement, CheckedStatementKind, Module,
-        TypeKind,
+        CheckedExpression, CheckedExpressionKind, CheckedPatternKind, CheckedStatement,
+        CheckedStatementKind, Module, TypeKind,
     },
 };
 
@@ -82,7 +82,7 @@ impl CEmitter {
             
             #define SAFE_DEREF(x) \
             ((x) ? *(x) : (exit(1), *(x)))
-            #define DA_APPEND(arr, x) \
+            #define DA_PUSH(arr, x) \
             do { \
                 if ((arr).count == (arr).capacity) { \
                     (arr).capacity = ((arr).capacity == 0) ? 1 : (arr).capacity * 2; \
@@ -104,7 +104,7 @@ impl CEmitter {
             arr.capacity = 0; \
             type init_values[] = {__VA_ARGS__}; \
             for (int i = 0; i < sizeof(init_values) / sizeof(init_values[0]); ++i) { \
-                DA_APPEND(arr, init_values[i]); \
+                DA_PUSH(arr, init_values[i]); \
             } \
             arr; \
         })
@@ -155,7 +155,7 @@ impl CEmitter {
         //         _ => todo!("emit module type kind: {}", type_kind),
         //     }
         // }
-        for type_kind in &module.types {
+        for type_kind in module.types.values() {
             match type_kind {
                 TypeKind::Record(name, generic_params, members) => {
                     if !generic_params.is_empty() {
@@ -219,6 +219,32 @@ impl CEmitter {
                     }
                     writeln!(self.out_file, "}} {};", name)?;
                 }
+                TypeKind::TaggedUnion(name, variant_types) => {
+                    writeln!(self.out_file, "typedef struct {} {{", name)?;
+                    writeln!(self.out_file, "int tag;")?;
+                    writeln!(self.out_file, "union {}_variants {{", name)?;
+                    for variant_type in variant_types {
+                        match variant_type {
+                            TypeKind::UnionVariant(variant_name, data_types) => {
+                                writeln!(self.out_file, "struct {} {{", variant_name)?;
+                                writeln!(self.out_file, "int tag;")?;
+                                for (i, data_type) in data_types.iter().enumerate() {
+                                    writeln!(
+                                        self.out_file,
+                                        "{} v{};",
+                                        Self::get_c_type(data_type),
+                                        i
+                                    )?;
+                                }
+                                writeln!(self.out_file, "}} {}_variant;", variant_name)?;
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    writeln!(self.out_file, "}} {};", name)?;
+                    writeln!(self.out_file, "}} {};", name)?;
+                }
+
                 _ => todo!("emit module type kind: {}", type_kind),
             }
         }
@@ -382,27 +408,24 @@ impl CEmitter {
                 name: _,
                 variants: _,
             } => (), //No need to emit enums again
-            CheckedStatementKind::MatchCases { cases } => {
-                for case in cases {
-                    match &case.kind {
-                        CheckedExpressionKind::MatchCase { pattern, result } => {
-                            write!(self.out_file, "     case ")?;
-                            self.emit_expression(pattern)?;
-                            writeln!(self.out_file, ":")?;
-                            writeln!(self.out_file, "{{")?;
-                            self.emit_expression(result)?;
-                            writeln!(self.out_file, ";}};")?;
-                            writeln!(self.out_file, "break;")?;
-                        }
-                        _ => unreachable!(),
-                    }
-                }
+            CheckedStatementKind::MatchArms { arms: _cases } => {
+                unreachable!("Handled in emit Match")
             }
-            CheckedStatementKind::Match { expression, cases } => {
+            CheckedStatementKind::Match {
+                expression,
+                match_arms: cases,
+            } => {
                 write!(self.out_file, "switch (")?;
                 self.emit_expression(expression)?;
+                if let TypeKind::TaggedUnion(_, _) = expression.type_kind {
+                    write!(self.out_file, ".tag")?;
+                }
                 writeln!(self.out_file, ") {{")?;
-                self.emit_statement(cases)?;
+                if let CheckedStatementKind::MatchArms { arms } = &cases.kind {
+                    self.emit_match_arms(expression, arms.to_vec())?;
+                } else {
+                    unreachable!()
+                }
                 writeln!(self.out_file, "}}")?;
             }
             CheckedStatementKind::NoOp => {}
@@ -412,6 +435,56 @@ impl CEmitter {
                 body: _,
             } => unreachable!("Should have been rewritten to a while loop"),
         }
+        Ok(())
+    }
+
+    fn emit_match_arms(
+        &mut self,
+        expression: &CheckedExpression,
+        arms: Vec<CheckedExpression>,
+    ) -> Result<(), io::Error> {
+        for arm in arms {
+            match &arm.kind {
+                CheckedExpressionKind::MatchCase { pattern, result } => {
+                    write!(self.out_file, "     case ")?;
+                    match pattern {
+                        CheckedPatternKind::EnumIdentifier(enum_variant) => {
+                            if let TypeKind::Enum(enum_name, _) = &enum_variant.type_kind {
+                                write!(self.out_file, "{}_{}", enum_name, enum_variant.name)?;
+                            }
+                            writeln!(self.out_file, ":")?;
+                            writeln!(self.out_file, "{{")?;
+                        }
+                        CheckedPatternKind::TaggedUnionTuple(tag, variant, args) => {
+                            write!(self.out_file, "{}:", tag)?;
+                            writeln!(self.out_file, "{{")?;
+                            for (i, arg) in args.iter().enumerate() {
+                                write!(
+                                    self.out_file,
+                                    "{} {} = ",
+                                    Self::get_c_type(&arg.type_kind),
+                                    arg.name
+                                )?;
+                                self.emit_expression(expression)?; //TODO: This could cause issues if this produces side effects
+
+                                write!(
+                                    self.out_file,
+                                    ".{}.{}_variant.v{};",
+                                    Self::get_c_type(&variant.type_kind),
+                                    variant.name,
+                                    i
+                                )?;
+                            }
+                        }
+                    }
+
+                    self.emit_statement(result)?;
+                    writeln!(self.out_file, "}};")?;
+                    writeln!(self.out_file, "break;")?;
+                }
+                _ => unreachable!("{:?}", &arm.kind),
+            }
+        };
         Ok(())
     }
 
@@ -503,6 +576,9 @@ impl CEmitter {
                         write!(self.out_file, "{}_values[", name)?;
                         self.emit_expression(arg)?;
                         write!(self.out_file, "]")?;
+                    } else if let TypeKind::Bool = &arg.type_kind {
+                        self.emit_expression(arg)?;
+                        write!(self.out_file, " ? \"true\" : \"false\"")?;
                     } else {
                         self.emit_expression(arg)?;
                     }
@@ -521,6 +597,9 @@ impl CEmitter {
                         write!(self.out_file, "{}_values[", name)?;
                         self.emit_expression(arg)?;
                         write!(self.out_file, "]")?;
+                    } else if let TypeKind::Bool = &arg.type_kind {
+                        self.emit_expression(arg)?;
+                        write!(self.out_file, " ? \"true\" : \"false\"")?;
                     } else {
                         self.emit_expression(arg)?;
                     }
@@ -528,8 +607,8 @@ impl CEmitter {
                     return Ok(());
                 }
                 //Dynamic arrays
-                if name == "append" {
-                    write!(self.out_file, "DA_APPEND(")?;
+                if name == "push" {
+                    write!(self.out_file, "DA_PUSH(")?;
                     self.emit_expression(&args[0])?;
                     write!(self.out_file, ", (")?;
                     self.emit_expression(&args[1])?;
@@ -640,11 +719,11 @@ impl CEmitter {
                         write!(self.out_file, "{{")?;
                         self.emit_expression(array)?;
                         write!(self.out_file, ".data , ")?;
-                        self.emit_expression(&lower)?;
+                        self.emit_expression(lower)?;
                         write!(self.out_file, ", ")?;
-                        self.emit_expression(&upper)?;
+                        self.emit_expression(upper)?;
                         write!(self.out_file, " - ")?;
-                        self.emit_expression(&lower)?;
+                        self.emit_expression(lower)?;
                         write!(self.out_file, "}}")?;
                         return Ok(());
                     }
@@ -670,11 +749,11 @@ impl CEmitter {
                         write!(self.out_file, "{{")?;
                         self.emit_expression(array)?;
                         write!(self.out_file, ", ")?;
-                        self.emit_expression(&lower)?;
+                        self.emit_expression(lower)?;
                         write!(self.out_file, ", ")?;
-                        self.emit_expression(&upper)?;
+                        self.emit_expression(upper)?;
                         write!(self.out_file, " - ")?;
-                        self.emit_expression(&lower)?;
+                        self.emit_expression(lower)?;
                         write!(self.out_file, "}}")?;
                         return Ok(());
                     }
@@ -730,11 +809,12 @@ impl CEmitter {
             } => todo!(),
             CheckedExpressionKind::Nil => write!(self.out_file, " NULL "),
             CheckedExpressionKind::ForceUnwrap { expression } => {
-                if let TypeKind::Optional(_) = expression.type_kind {
-                    self.emit_expression(expression)?;
-                    return Ok(());
+                if let TypeKind::Optional(inner) = &expression.type_kind {
+                    if let TypeKind::File = **inner {
+                        self.emit_expression(expression)?;
+                        return Ok(());
+                    }
                 }
-                //TODO: use a safe macro
                 write!(self.out_file, "SAFE_DEREF(")?;
                 self.emit_expression(expression)?;
                 write!(self.out_file, ")")?;
@@ -767,6 +847,32 @@ impl CEmitter {
             } => {
                 write!(self.out_file, "({}) ", Self::get_c_type(type_kind))?;
                 self.emit_expression(expression)?;
+                Ok(())
+            }
+            CheckedExpressionKind::TaggedUnionLiteral {
+                tag,
+                union_name,
+                variant_name,
+                args,
+            } => {
+                //(Shape){.tag = 'C', .Shape.Circle_variant.Circle0 = 3.14};
+
+                write!(self.out_file, "({})", union_name)?;
+                write!(self.out_file, "{{.tag = {}", tag)?;
+                write!(
+                    self.out_file,
+                    ", .{}.{}_variant.tag = {}",
+                    union_name, variant_name, tag
+                )?;
+                for (i, arg) in args.iter().enumerate() {
+                    write!(
+                        self.out_file,
+                        ", .{}.{}_variant.v{} = ",
+                        union_name, variant_name, i
+                    )?;
+                    self.emit_expression(arg)?;
+                }
+                write!(self.out_file, "}}")?;
                 Ok(())
             }
         }
@@ -814,12 +920,15 @@ impl CEmitter {
             TypeKind::File => "FILE *".to_string(),
             TypeKind::Optional(base_type) => match **base_type {
                 TypeKind::File => format!("{} ", Self::get_c_type(base_type)),
+                TypeKind::Record(..) => format!("struct {} *", Self::get_c_type(base_type)),
                 _ => format!("{} *", Self::get_c_type(base_type)),
             },
             TypeKind::DynamicArray(el_type) => {
                 format!("da_{}", el_type)
             }
             TypeKind::Pointer(base_type) => format!("{} *", Self::get_c_type(base_type)),
+            TypeKind::UnionVariant(name, _) => name.to_string(),
+            TypeKind::TaggedUnion(name, _) => name.to_string(),
         }
     }
 
@@ -858,13 +967,15 @@ impl CEmitter {
             TypeKind::Pointer(base_type) => {
                 format!("{} *{}", Self::get_c_type(base_type), param_name)
             }
+            TypeKind::UnionVariant(_, _) => todo!(),
+            TypeKind::TaggedUnion(name, _) => format!("{} {}", name, param_name),
         }
     }
 
     fn get_print_format_for_type(type_kind: &TypeKind) -> String {
         match type_kind {
             TypeKind::Unit => panic!("can't format void!"),
-            TypeKind::Bool => "%d".to_string(),
+            TypeKind::Bool => "%s".to_string(),
             TypeKind::Array(_, _) => todo!(),
             TypeKind::Slice(_) => todo!(),
             TypeKind::Record(_, _, _) => todo!(),
@@ -887,6 +998,8 @@ impl CEmitter {
             TypeKind::Optional(base_type) => Self::get_print_format_for_type(base_type),
             TypeKind::DynamicArray(_) => todo!(),
             TypeKind::Pointer(_) => "%zu".to_string(),
+            TypeKind::UnionVariant(_, _) => todo!(),
+            TypeKind::TaggedUnion(_, _) => todo!(),
         }
     }
 }

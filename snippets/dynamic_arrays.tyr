@@ -14,7 +14,7 @@ function test1() {
     var da = [dynamic]i32 {};
 
     for i in a {
-        da.append(i);
+        da.push(i);
     }
 
     da.print_da();
@@ -24,8 +24,8 @@ function test1() {
     }
 
     var df = [dynamic]f32 {};
-    df.append(66.5);
-    df.append(45.2);
+    df.push(66.5);
+    df.push(45.2);
 
     println("------");
     for f in df {
@@ -45,9 +45,9 @@ function test1() {
 function main() {
     var da = [dynamic]i32{};
 
-    da.append(10);
-    da.append(17);
-    da.append(24);
+    da.push(10);
+    da.push(17);
+    da.push(24);
 
     var x = da.pop();
 
@@ -56,7 +56,7 @@ function main() {
         println(i);
     }
     da.clear();
-    da.append(18); 
+    da.push(18); 
     for i in da {
         println(i);
     }

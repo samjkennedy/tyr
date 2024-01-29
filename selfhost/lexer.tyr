@@ -33,17 +33,17 @@ function lex(f: File): [dynamic]Token {
     while -1 != c {
 
         if c == '+' {
-            tokens.append(Token { TokenKind::Plus, 0 } );
+            tokens.push(Token { TokenKind::Plus, 0 } );
         } else if c == '-' {
-            tokens.append(Token { TokenKind::Minus, 0 } );
+            tokens.push(Token { TokenKind::Minus, 0 } );
         } else if c == '*' {
-            tokens.append(Token { TokenKind::Star, 0 } );
+            tokens.push(Token { TokenKind::Star, 0 } );
         } else if c == '/' {
-            tokens.append(Token { TokenKind::Slash, 0 } );
+            tokens.push(Token { TokenKind::Slash, 0 } );
         } else if c == '(' {
-            tokens.append(Token { TokenKind::OpenParen, 0 } );
+            tokens.push(Token { TokenKind::OpenParen, 0 } );
         } else if c == ')' {
-            tokens.append(Token { TokenKind::CloseParen, 0 } );
+            tokens.push(Token { TokenKind::CloseParen, 0 } );
         } else if c.is_numeric() {
             var n = c.parse_i32();
             c = f.read_char();
@@ -53,7 +53,7 @@ function lex(f: File): [dynamic]Token {
                 n = n + c.parse_i32();
                 c = f.read_char();
             }
-            tokens.append(Token { TokenKind::IntLiteral, n } );
+            tokens.push(Token { TokenKind::IntLiteral, n } );
             continue;
         } else if c == ' ' {
             c = f.read_char();
@@ -67,25 +67,57 @@ function lex(f: File): [dynamic]Token {
     return tokens;
 }
 
-function main(args: []string) {
-    if args.count == 1 {
-        println("Please provide file to parse");
-        return;
+enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+function print_binop(binop: BinaryOp) {
+    match binop {
+        BinaryOp::Add => print("+");
+        BinaryOp::Sub => print("-");
+        BinaryOp::Mul => print("*");
+        BinaryOp::Div => print("/");
     }
-    var f = open_file(args[1], "r")!;
+}
 
-    var tokens = lex(f);
+enum Expression {
+    IntLiteral(u32),
+    Parenthesised(Expression),
+    Binary(Expression, BinaryOp, Expression),
+}
 
-    print("Parsed ");
-    print(tokens.count);
-    println(" tokens:");
-
-    for token in tokens {
-        print(token.kind);
-        if token.kind == TokenKind::IntLiteral {
-            print(" - ");
-            print(token.operand);
+function print_expression(e: Expression) {
+    match e {
+        Expression::IntLiteral(i) => print(i);
+        Expression::Parenthesised(expr) => {
+            print("(");
+            expr.print_expression();
+            print(")");
         }
-        println("");
+        Expression::Binary(left, op, right) => {
+            left.print_expression();
+            op.print_binop();
+            right.print_expression();
+        }
     }
+}
+
+function main(args: []string) {
+
+    var expr = Expression::Binary(
+        Expression::Parenthesised(
+            Expression::Binary(
+                Expression::IntLiteral(5),
+                BinaryOp::Add,
+                Expression::IntLiteral(6)
+            )
+        ),
+        BinaryOp::Mul,
+        Expression::IntLiteral(10)
+    );
+
+    expr.print_expression();
 }

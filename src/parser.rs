@@ -57,12 +57,17 @@ pub enum StatementKind {
         identifier: Token,
         variants: Vec<Token>,
     },
-    Match {
+    TaggedUnion {
+        enum_keyword: Token,
+        identifier: Token,
+        variants: Vec<Expression>,
+    },
+    Switch {
         match_keyword: Token,
         expression: Expression,
         cases: Box<Statement>,
     },
-    MatchCases {
+    SwitchCases {
         cases: Vec<Expression>,
     },
     Break,
@@ -186,10 +191,10 @@ pub enum ExpressionKind {
         dotdot: Token,
         upper: Box<Expression>,
     },
-    MatchCase {
-        pattern: Box<Expression>,
+    SwitchCase {
+        pattern: PatternKind,
         fat_arrow: Token,
-        result: Box<Expression>,
+        result: Box<Statement>,
     },
     Nil {
         nil_keyword: Token,
@@ -202,6 +207,31 @@ pub enum ExpressionKind {
         expression: Box<Expression>,
         as_keyword: Token,
         type_expression: TypeExpressionKind,
+    },
+    EnumVariant {
+        identifier: Token,
+        open_paren: Token,
+        data: Vec<TypeExpressionKind>,
+        close_paren: Token,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum PatternKind {
+    Literal {
+        token: Token,
+    },
+    //Range { lower: Expression, upper: Expression}
+    EnumIdentifier {
+        namespace: Token,
+        identifier: Token,
+    },
+    TaggedUnionTuple {
+        namespace: Token,
+        identifier: Token,
+        open_paren: Token,
+        args: Vec<Token>,
+        close_paren: Token,
     },
 }
 
@@ -285,11 +315,11 @@ impl Location for ExpressionKind {
                 colon_colon: _,
                 member,
             } => span_locs(&namespace.loc, &member.kind.get_loc()),
-            ExpressionKind::MatchCase {
+            ExpressionKind::SwitchCase {
                 pattern,
                 fat_arrow: _,
-                result,
-            } => span_locs(&pattern.kind.get_loc(), &result.kind.get_loc()),
+                result: _,
+            } => span_locs(&pattern.get_loc(), &pattern.get_loc()), //TODO: result is a statement so can't get its Loc
             ExpressionKind::Nil { nil_keyword } => nil_keyword.loc.clone(),
             ExpressionKind::ForceUnwrap { expression, bang } => {
                 span_locs(&expression.kind.get_loc(), &bang.loc)
@@ -304,6 +334,31 @@ impl Location for ExpressionKind {
                 as_keyword: _,
                 type_expression,
             } => span_locs(&expression.kind.get_loc(), &type_expression.get_loc()),
+            ExpressionKind::EnumVariant {
+                identifier,
+                open_paren: _,
+                data: _,
+                close_paren,
+            } => span_locs(&identifier.loc, &close_paren.loc),
+        }
+    }
+}
+
+impl Location for PatternKind {
+    fn get_loc(&self) -> Loc {
+        match self {
+            PatternKind::Literal { token } => token.loc.clone(),
+            PatternKind::EnumIdentifier {
+                namespace,
+                identifier,
+            } => span_locs(&namespace.loc, &identifier.loc),
+            PatternKind::TaggedUnionTuple {
+                namespace,
+                identifier: _,
+                open_paren: _,
+                args: _,
+                close_paren,
+            } => span_locs(&namespace.loc, &close_paren.loc),
         }
     }
 }
@@ -499,7 +554,7 @@ impl Parser {
 
                     Ok(Statement {
                         kind: StatementKind::VariableDeclaration {
-                            var_keyword: var_keyword.clone(),
+                            var_keyword,
                             identifier,
                             type_annotation,
                             equals,
@@ -739,20 +794,58 @@ impl Parser {
                 let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
                 Self::expect_token(tokens, TokenKind::OpenCurly)?;
 
-                let mut variants: Vec<Token> = Vec::new();
+                let mut variants: Vec<Expression> = Vec::new();
+                let mut is_tagged_union = false;
                 while tokens.peek().is_some()
                     && tokens.peek().unwrap().kind != TokenKind::CloseCurly
                 {
-                    variants.push(Self::expect_token(tokens, TokenKind::Identifier)?);
+                    let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
 
-                    if tokens.peek().is_some()
-                        && tokens.peek().unwrap().kind != TokenKind::CloseCurly
-                    {
-                        Self::expect_token(tokens, TokenKind::Comma)?;
-                    }
+                    let variant: Expression = match tokens.peek() {
+                        Some(token) => match token.kind {
+                            TokenKind::Comma => {
+                                Self::expect_token(tokens, TokenKind::Comma)?;
+                                Ok(Expression {
+                                    kind: ExpressionKind::Variable { identifier },
+                                })
+                            }
+                            //Parse anonymous variant data type, e.g. Circle(f32),
+                            TokenKind::OpenParen => {
+                                is_tagged_union = true;
+                                let data_variant =
+                                    Self::parse_enum_data_variant(tokens, identifier);
+                                Self::expect_token(tokens, TokenKind::Comma)?;
+                                data_variant
+                            }
+                            TokenKind::CloseCurly => {
+                                break;
+                            }
+                            _ => Err(ParseError::UnexpectedToken((*token).clone())),
+                        },
+                        None => Err(ParseError::UnexpectedEOF),
+                    }?;
+                    variants.push(variant);
                 }
 
                 Self::expect_token(tokens, TokenKind::CloseCurly)?;
+
+                if is_tagged_union {
+                    return Ok(Statement {
+                        kind: StatementKind::TaggedUnion {
+                            enum_keyword,
+                            identifier,
+                            variants,
+                        },
+                    });
+                }
+
+                let variants = variants
+                    .iter()
+                    .map(|e| match &e.kind {
+                        ExpressionKind::Variable { identifier } => identifier.clone(),
+                        _ => unreachable!(),
+                    })
+                    .collect();
 
                 Ok(Statement {
                     kind: StatementKind::Enum {
@@ -762,14 +855,14 @@ impl Parser {
                     },
                 })
             }
-            TokenKind::MatchKeyword => {
-                let match_keyword = Self::expect_token(tokens, TokenKind::MatchKeyword)?;
+            TokenKind::SwitchKeyword => {
+                let match_keyword = Self::expect_token(tokens, TokenKind::SwitchKeyword)?;
                 let expression = self.parse_binary_expression(tokens, 0)?;
 
                 let cases = self.parse_match_cases(tokens)?;
 
                 Ok(Statement {
-                    kind: StatementKind::Match {
+                    kind: StatementKind::Switch {
                         match_keyword,
                         expression,
                         cases: Box::new(cases),
@@ -812,6 +905,43 @@ impl Parser {
                 })
             }
         }
+    }
+
+    fn parse_enum_data_variant(
+        tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
+        identifier: Token,
+    ) -> Result<Expression, ParseError> {
+        let open_paren = Self::expect_token(tokens, TokenKind::OpenParen)?;
+        let mut data: Vec<TypeExpressionKind> = Vec::new();
+        while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseParen {
+            data.push(Self::parse_type_expression_kind(tokens)?);
+
+            match tokens.peek() {
+                Some(token) => match token.kind {
+                    TokenKind::Comma => {
+                        Self::expect_token(tokens, TokenKind::Comma)?;
+                    }
+                    TokenKind::CloseParen => {
+                        break;
+                    }
+                    _ => {
+                        return Err(ParseError::UnexpectedToken((*token).clone()));
+                    }
+                },
+                None => {
+                    return Err(ParseError::UnexpectedEOF);
+                }
+            }
+        }
+        let close_paren = Self::expect_token(tokens, TokenKind::CloseParen)?;
+        Ok(Expression {
+            kind: ExpressionKind::EnumVariant {
+                identifier,
+                open_paren,
+                data,
+                close_paren,
+            },
+        })
     }
 
     fn parse_block_statement(
@@ -1353,27 +1483,95 @@ impl Parser {
 
         let mut cases: Vec<Expression> = Vec::new();
         while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
-            let pattern = self.parse_binary_expression(tokens, 0)?;
+            let pattern = self.parse_match_pattern(tokens)?;
             let fat_arrow = Self::expect_token(tokens, TokenKind::FatArrow)?;
-            let result = self.parse_binary_expression(tokens, 0)?;
+            let result = self.parse_statement(tokens)?;
 
             cases.push(Expression {
-                kind: ExpressionKind::MatchCase {
-                    pattern: Box::new(pattern),
+                kind: ExpressionKind::SwitchCase {
+                    pattern,
                     fat_arrow,
                     result: Box::new(result),
                 },
             });
 
-            if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
-                Self::expect_token(tokens, TokenKind::Comma)?;
-            }
+            // if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
+            //     Self::expect_token(tokens, TokenKind::Comma)?;
+            // }
         }
         let _close_curly = Self::expect_token(tokens, TokenKind::CloseCurly)?;
 
         Ok(Statement {
-            kind: StatementKind::MatchCases { cases },
+            kind: StatementKind::SwitchCases { cases },
         })
+    }
+
+    fn parse_match_pattern(
+        &self,
+        tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
+    ) -> Result<PatternKind, ParseError> {
+        match tokens.next() {
+            Some(token) => match token.kind {
+                //TODO: This is hyper specific to a few very specific patterns, update over time as more patterns are added
+                TokenKind::Identifier => {
+                    let identifier = token.clone();
+
+                    if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::FatArrow
+                    {
+                        Self::expect_token(tokens, TokenKind::ColonColon)?;
+                        let enum_name = Self::expect_token(tokens, TokenKind::Identifier)?;
+
+                        if tokens.peek().is_some()
+                            && tokens.peek().unwrap().kind != TokenKind::FatArrow
+                        {
+                            let open_paren = Self::expect_token(tokens, TokenKind::OpenParen)?;
+                            let mut args: Vec<Token> = Vec::new();
+                            while tokens.peek().is_some()
+                                && tokens.peek().unwrap().kind != TokenKind::CloseParen
+                            {
+                                args.push(Self::expect_token(tokens, TokenKind::Identifier)?);
+
+                                match tokens.peek() {
+                                    Some(token) => match token.kind {
+                                        TokenKind::Comma => {
+                                            Self::expect_token(tokens, TokenKind::Comma)?;
+                                        }
+                                        TokenKind::CloseParen => {
+                                            break;
+                                        }
+                                        _ => {
+                                            return Err(ParseError::UnexpectedToken(
+                                                (*token).clone(),
+                                            ));
+                                        }
+                                    },
+                                    None => {
+                                        return Err(ParseError::UnexpectedEOF);
+                                    }
+                                }
+                            }
+                            let close_paren = Self::expect_token(tokens, TokenKind::CloseParen)?;
+                            Ok(PatternKind::TaggedUnionTuple {
+                                namespace: identifier,
+                                identifier: enum_name,
+                                open_paren,
+                                args,
+                                close_paren,
+                            })
+                        } else {
+                            Ok(PatternKind::EnumIdentifier {
+                                namespace: identifier,
+                                identifier: enum_name,
+                            })
+                        }
+                    } else {
+                        Ok(PatternKind::Literal { token: identifier })
+                    }
+                }
+                _ => Err(ParseError::UnexpectedToken(token.clone())),
+            },
+            None => Err(ParseError::UnexpectedEOF),
+        }
     }
 
     fn parse_cast(
