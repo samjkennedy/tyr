@@ -4,10 +4,11 @@ use std::{env, fs::File};
 
 use emitter::CEmitter;
 use lexer::{lex_file, LexError};
-use parser::{ParseError, Parser, Statement};
+use parser::{Parser, Statement};
 use type_checker::TypeChecker;
 
-use crate::diagnostics::format_typecheck_error;
+use crate::diagnostics::print_parse_error;
+use crate::diagnostics::print_typecheck_error;
 
 pub mod emitter;
 pub mod lexer;
@@ -42,13 +43,13 @@ fn main() {
                 LexError::InvalidCharacter(c, loc) => eprintln!(
                     "Invalid character '{}' at {}:{}:{}",
                     c,
-                    loc.file,
+                    file_name,
                     loc.row,
                     loc.col + 1
                 ),
                 LexError::UnterminatedCharLiteral(loc) => eprintln!(
                     "Unterminated character literal at {}:{}:{}",
-                    loc.file,
+                    file_name,
                     loc.row,
                     loc.col + 1
                 ),
@@ -61,39 +62,7 @@ fn main() {
     let statements: Vec<Statement> = match parser.parse_statements(tokens) {
         Ok(statements) => statements,
         Err(e) => {
-            match e {
-                ParseError::UnexpectedToken(tok) => {
-                    eprintln!(
-                        "Unexpected token \"{}\" ({:?}) at {}:{}:{}",
-                        tok.text,
-                        tok.kind,
-                        tok.loc.file,
-                        tok.loc.row,
-                        tok.loc.col + 1
-                    )
-                }
-                ParseError::UnexpectedEOF => eprintln!("Unexpected EOF"),
-                ParseError::TokenMismatch { expected, actual } => {
-                    eprintln!(
-                        "Expected token {:?} but got \"{}\" ({:?}) at {}:{}:{}",
-                        expected,
-                        actual.text,
-                        actual.kind,
-                        actual.loc.file,
-                        actual.loc.row,
-                        actual.loc.col + 1
-                    )
-                }
-                ParseError::ExpectedSemicolon(loc) => {
-                    eprintln!(
-                        "Expected semicolon at {}:{}:{}",
-                        loc.file,
-                        loc.row,
-                        loc.col + 1
-                    )
-                }
-                ParseError::CannotStaticallyAccess(_expression) => todo!(),
-            }
+            print_parse_error(file_name, &e);
             return;
         }
     };
@@ -103,7 +72,7 @@ fn main() {
     let mut module = match type_checker.type_check_statements(statements) {
         Ok(module) => module,
         Err(e) => {
-            eprintln!("{}", format_typecheck_error(&e));
+            eprintln!("{}", print_typecheck_error(file_name, &e));
             return;
         }
     };

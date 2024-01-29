@@ -1,13 +1,13 @@
 enum Color {
     Red,
     Green,
-    Blue
+    Blue,
 }
 
 enum TrafficLight {
     Red,
     Yellow,
-    Green
+    Green,
 }
 
 function print_color(c: Color) {

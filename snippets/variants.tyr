@@ -1,0 +1,23 @@
+enum Shape {
+    Circle(f32),
+    Square(f32),
+    Rect(f32, f32),
+}
+
+function area(s: Shape) {
+    match s {
+        Shape::Circle(radius) => println(radius * radius * 3.1415),
+        Shape::Square(length) => println(length * length),
+        Shape::Rect(width, height) => println(width * height),
+    }
+}
+
+function main() {
+    var c = Shape::Circle(3.5);
+    var s = Shape::Square(2.0);
+    var r = Shape::Rect(3.0, 4.0);
+
+    c.area();
+    s.area();
+    r.area();
+}

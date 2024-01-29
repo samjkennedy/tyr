@@ -4,8 +4,8 @@ use std::{collections::HashMap, path::PathBuf};
 use crate::{
     lexer::{lex_file, span_locs, Loc, Token, TokenKind},
     parser::{
-        self, BinaryOp, BinaryOpKind, Expression, ExpressionKind, Location, Parser, Statement,
-        StatementKind, TypeExpressionKind, UnaryOp, UnaryOpKind,
+        self, BinaryOp, BinaryOpKind, Expression, ExpressionKind, Location, Parser, PatternKind,
+        Statement, StatementKind, TypeExpressionKind, UnaryOp, UnaryOpKind,
     },
 };
 
@@ -31,6 +31,8 @@ pub enum TypeKind {
     Record(String, Vec<TypeKind>, Vec<CheckedVariable>),
     Range(Box<TypeKind>),
     Enum(String, Vec<String>),
+    TaggedUnion(String, Vec<TypeKind>),
+    UnionVariant(String, Vec<TypeKind>),
     GenericParameter(String),
     Optional(Box<TypeKind>),
     Pointer(Box<TypeKind>),
@@ -84,7 +86,9 @@ impl fmt::Display for TypeKind {
             TypeKind::Range(inner_type) => {
                 write!(f, "range<{}>", inner_type)
             }
-            TypeKind::Enum(name, _) => write!(f, "{}", name),
+            TypeKind::Enum(name, _)
+            | TypeKind::TaggedUnion(name, _)
+            | TypeKind::UnionVariant(name, _) => write!(f, "{}", name),
             TypeKind::GenericParameter(name) => write!(f, "{}", name),
             TypeKind::File => write!(f, "File"),
             TypeKind::Optional(base_type) => write!(f, "?{}", base_type),
@@ -190,6 +194,11 @@ pub enum TypeCheckError {
         type_kind: TypeKind,
         loc: Loc,
     },
+    NoSuchVariant {
+        variant_name: String,
+        union_name: String,
+        loc: Loc,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -234,12 +243,12 @@ pub enum CheckedStatementKind {
     },
     Break,
     Continue,
-    MatchCases {
-        cases: Vec<CheckedExpression>,
+    MatchArms {
+        arms: Vec<CheckedExpression>,
     },
     Match {
         expression: CheckedExpression,
-        cases: Box<CheckedStatement>,
+        match_arms: Box<CheckedStatement>,
     },
     NoOp,
     ForIn {
@@ -345,8 +354,8 @@ pub enum CheckedExpressionKind {
         member: CheckedVariable,
     },
     MatchCase {
-        pattern: Box<CheckedExpression>,
-        result: Box<CheckedExpression>,
+        pattern: CheckedPatternKind,
+        result: Box<CheckedStatement>,
     },
     Nil,
     ForceUnwrap {
@@ -363,6 +372,20 @@ pub enum CheckedExpressionKind {
         expression: Box<CheckedExpression>,
         type_kind: TypeKind,
     },
+    TaggedUnionLiteral {
+        tag: usize,
+        union_name: String,
+        variant_name: String,
+        args: Vec<CheckedExpression>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum CheckedPatternKind {
+    //Literal(?),
+    //Range(?, ?),
+    EnumIdentifier(CheckedVariable),
+    TaggedUnionTuple(usize, CheckedVariable, Vec<CheckedVariable>),
 }
 
 #[derive(Debug, Clone)]
@@ -514,14 +537,37 @@ impl Scope {
         Ok(())
     }
 
-    fn try_declare_type(&mut self, type_kind: TypeKind, loc: Loc) -> Result<(), TypeCheckError> {
+    fn try_declare_type(
+        &mut self,
+        type_kind: TypeKind,
+        loc: Loc,
+        redeclare: bool,
+    ) -> Result<(), TypeCheckError> {
         match &type_kind {
             TypeKind::Record(name, ..) => {
                 if self.types.contains_key(name) {
-                    return Err(TypeCheckError::TypeAlreadyDeclared {
-                        type_name: name.clone(),
-                        loc: loc.clone(),
-                    });
+                    if redeclare {
+                        self.types.remove(name);
+                    } else {
+                        return Err(TypeCheckError::TypeAlreadyDeclared {
+                            type_name: name.clone(),
+                            loc: loc.clone(),
+                        });
+                    }
+                }
+                self.types.insert(name.clone(), type_kind);
+                Ok(())
+            }
+            TypeKind::TaggedUnion(name, ..) => {
+                if self.types.contains_key(name) {
+                    if redeclare {
+                        self.types.remove(name);
+                    } else {
+                        return Err(TypeCheckError::TypeAlreadyDeclared {
+                            type_name: name.clone(),
+                            loc: loc.clone(),
+                        });
+                    }
                 }
                 self.types.insert(name.clone(), type_kind);
                 Ok(())
@@ -538,10 +584,14 @@ impl Scope {
             }
             TypeKind::Enum(name, variants) => {
                 if self.types.contains_key(name) {
-                    return Err(TypeCheckError::TypeAlreadyDeclared {
-                        type_name: name.clone(),
-                        loc: loc.clone(),
-                    });
+                    if redeclare {
+                        self.types.remove(name);
+                    } else {
+                        return Err(TypeCheckError::TypeAlreadyDeclared {
+                            type_name: name.clone(),
+                            loc: loc.clone(),
+                        });
+                    }
                 }
                 if self.modules.contains_key(name) {
                     return Err(TypeCheckError::TypeAlreadyDeclared {
@@ -752,7 +802,6 @@ fn create_file_module(scope: &mut Scope) {
             args: vec![TypeKind::String, TypeKind::String],
             return_type: Some(TypeKind::Optional(Box::new(TypeKind::File))),
             declaration_loc: Loc {
-                file: "".to_owned(),
                 row: 0,
                 col: 0,
                 len: 0,
@@ -767,7 +816,6 @@ fn create_file_module(scope: &mut Scope) {
             args: vec![TypeKind::File],
             return_type: Some(TypeKind::Char),
             declaration_loc: Loc {
-                file: "".to_owned(),
                 row: 0,
                 col: 0,
                 len: 0,
@@ -782,7 +830,6 @@ fn create_file_module(scope: &mut Scope) {
             args: vec![TypeKind::File, TypeKind::String],
             return_type: None,
             declaration_loc: Loc {
-                file: "".to_owned(),
                 row: 0,
                 col: 0,
                 len: 0,
@@ -797,7 +844,6 @@ fn create_file_module(scope: &mut Scope) {
             args: vec![TypeKind::File],
             return_type: Some(TypeKind::Bool),
             declaration_loc: Loc {
-                file: "".to_owned(),
                 row: 0,
                 col: 0,
                 len: 0,
@@ -812,7 +858,6 @@ fn create_file_module(scope: &mut Scope) {
             args: vec![TypeKind::File],
             return_type: None,
             declaration_loc: Loc {
-                file: "".to_owned(),
                 row: 0,
                 col: 0,
                 len: 0,
@@ -833,7 +878,6 @@ fn create_dynamic_arrays_module(scope: &mut Scope) {
             ],
             return_type: None,
             declaration_loc: Loc {
-                file: "".to_owned(),
                 row: 0,
                 col: 0,
                 len: 0,
@@ -850,7 +894,6 @@ fn create_dynamic_arrays_module(scope: &mut Scope) {
             ))],
             return_type: None,
             declaration_loc: Loc {
-                file: "".to_owned(),
                 row: 0,
                 col: 0,
                 len: 0,
@@ -867,7 +910,6 @@ fn create_dynamic_arrays_module(scope: &mut Scope) {
             ))],
             return_type: Some(TypeKind::Bool),
             declaration_loc: Loc {
-                file: "".to_owned(),
                 row: 0,
                 col: 0,
                 len: 0,
@@ -884,7 +926,6 @@ fn create_dynamic_arrays_module(scope: &mut Scope) {
             ))],
             return_type: Some(TypeKind::GenericParameter("T".to_string())),
             declaration_loc: Loc {
-                file: "".to_owned(),
                 row: 0,
                 col: 0,
                 len: 0,
@@ -897,7 +938,7 @@ fn create_dynamic_arrays_module(scope: &mut Scope) {
 pub struct Module {
     pub name: String,
     pub imports: HashMap<String, Module>,
-    pub types: Vec<TypeKind>,
+    pub types: HashMap<String, TypeKind>,
     pub statements: Vec<CheckedStatement>,
     //TODO: eventually move all global declarations here, variables, functions, all types, etc
 }
@@ -907,7 +948,7 @@ impl Module {
         Module {
             name,
             imports: HashMap::new(),
-            types: Vec::new(),
+            types: HashMap::new(),
             statements: Vec::new(),
         }
     }
@@ -930,6 +971,7 @@ impl TypeChecker {
         &mut self,
         statements: Vec<Statement>,
     ) -> Result<Module, TypeCheckError> {
+        //println!("{:#?}", statements);
         for statement in statements {
             let checked_statement = self.type_check_statement(&statement)?;
 
@@ -1119,7 +1161,7 @@ impl TypeChecker {
                 })
             }
             StatementKind::Record {
-                record_keyword,
+                record_keyword: _,
                 identifier,
                 generic_type_parameters,
                 members,
@@ -1135,9 +1177,16 @@ impl TypeChecker {
                             gtp.text.clone()
                         )),
                         gtp.loc.clone(),
+                        false,
                     )?;
                     generic_params.push(TypeKind::GenericParameter(gtp.text.clone()));
                 }
+
+                let record =
+                    TypeKind::Record(identifier.text.clone(), generic_params.clone(), Vec::new());
+
+                self.scope
+                    .try_declare_type(record.clone(), identifier.loc.clone(), false)?;
 
                 for (member_identifier, type_annotation) in members {
                     if let ExpressionKind::TypeAnnotation {
@@ -1190,10 +1239,12 @@ impl TypeChecker {
                 );
 
                 self.scope
-                    .try_declare_type(record.clone(), record_keyword.loc.clone())?;
+                    .try_declare_type(record.clone(), identifier.loc.clone(), true)?;
 
                 if generic_params.is_empty() {
-                    self.module.types.push(record);
+                    self.module
+                        .types
+                        .insert(identifier.text.to_string(), record);
                 }
 
                 Ok(CheckedStatement {
@@ -1226,8 +1277,10 @@ impl TypeChecker {
                 let the_enum = TypeKind::Enum(identifier.text.clone(), checked_variants.clone());
 
                 self.scope
-                    .try_declare_type(the_enum.clone(), enum_keyword.loc.clone())?;
-                self.module.types.push(the_enum);
+                    .try_declare_type(the_enum.clone(), enum_keyword.loc.clone(), false)?;
+                self.module
+                    .types
+                    .insert(identifier.text.to_string(), the_enum);
 
                 Ok(CheckedStatement {
                     kind: CheckedStatementKind::Enum {
@@ -1236,18 +1289,18 @@ impl TypeChecker {
                     },
                 })
             }
-            StatementKind::MatchCases { cases } => {
+            StatementKind::SwitchCases { cases } => {
                 let mut checked_cases = Vec::new();
                 for case in cases {
                     checked_cases.push(self.type_check_expression(case)?);
                 }
                 Ok(CheckedStatement {
-                    kind: CheckedStatementKind::MatchCases {
-                        cases: checked_cases,
+                    kind: CheckedStatementKind::MatchArms {
+                        arms: checked_cases,
                     },
                 })
             }
-            StatementKind::Match {
+            StatementKind::Switch {
                 match_keyword: _,
                 expression,
                 cases,
@@ -1258,7 +1311,7 @@ impl TypeChecker {
                 Ok(CheckedStatement {
                     kind: CheckedStatementKind::Match {
                         expression: checked_expression,
-                        cases: Box::new(checked_cases),
+                        match_arms: Box::new(checked_cases),
                     },
                 })
             }
@@ -1366,49 +1419,182 @@ impl TypeChecker {
                     }),
                 }
             }
+            StatementKind::TaggedUnion {
+                enum_keyword: _,
+                identifier: enum_identifier,
+                variants,
+            } => {
+                let mut tagged_unions: Vec<TypeKind> = Vec::new();
+
+                let tagged_union_type =
+                    TypeKind::TaggedUnion(enum_identifier.text.to_string(), Vec::new());
+                self.scope.try_declare_type(
+                    tagged_union_type.clone(),
+                    enum_identifier.loc.clone(),
+                    false,
+                )?;
+                for variant in variants {
+                    match &variant.kind {
+                        ExpressionKind::EnumVariant {
+                            identifier,
+                            open_paren: _,
+                            data,
+                            close_paren: _,
+                        } => {
+                            let mut data_type_kinds = Vec::new();
+                            for data_type in data {
+                                let data_type_kind = self.scope.try_get_type(data_type)?;
+                                data_type_kinds.push(data_type_kind);
+                            }
+
+                            tagged_unions.push(TypeKind::UnionVariant(
+                                identifier.text.to_string(),
+                                data_type_kinds,
+                            ))
+                        }
+                        ExpressionKind::Variable { identifier } => tagged_unions.push(
+                            TypeKind::UnionVariant(identifier.text.to_string(), Vec::new()),
+                        ),
+                        _ => unreachable!("{:?}", &variant.kind),
+                    }
+                }
+                //TODO: Add enum type to scope so that we can actually use them
+                let tagged_union_type =
+                    TypeKind::TaggedUnion(enum_identifier.text.to_string(), tagged_unions);
+                self.module
+                    .types
+                    .insert(enum_identifier.text.to_string(), tagged_union_type.clone());
+
+                self.scope.try_declare_type(
+                    tagged_union_type,
+                    enum_identifier.loc.clone(),
+                    true,
+                )?;
+
+                Ok(CheckedStatement {
+                    kind: CheckedStatementKind::NoOp,
+                })
+            }
         }
     }
 
     fn type_check_match_cases(
         &mut self,
         cases: &Statement,
-        expression_type_kind: TypeKind,
+        _expression_type_kind: TypeKind,
     ) -> Result<CheckedStatement, TypeCheckError> {
-        if let StatementKind::MatchCases { cases } = &cases.kind {
+        if let StatementKind::SwitchCases { cases } = &cases.kind {
             let mut checked_cases = Vec::new();
             for case in cases {
-                if let ExpressionKind::MatchCase {
+                if let ExpressionKind::SwitchCase {
                     pattern,
                     fat_arrow: _,
                     result,
                 } = &case.kind
                 {
-                    let checked_pattern = self.type_check_expression(pattern)?;
-                    self.expect_type(
-                        expression_type_kind.clone(),
-                        checked_pattern.type_kind.clone(),
-                        pattern.kind.get_loc(),
-                    )?;
+                    let outer_scope = self.scope.clone();
+                    self.scope = Scope::new_inner_scope(outer_scope.clone());
 
-                    let checked_result = self.type_check_expression(result)?;
+                    let checked_pattern: CheckedPatternKind = match pattern {
+                        PatternKind::Literal { token: _ } => todo!(),
+                        PatternKind::EnumIdentifier {
+                            namespace,
+                            identifier,
+                        } => {
+                            let checked_member = self.scope.try_get_module_member(
+                                &namespace.text.clone(),
+                                &identifier.text,
+                                &identifier.loc,
+                            )?;
+                            CheckedPatternKind::EnumIdentifier(checked_member.clone())
+                        }
+                        PatternKind::TaggedUnionTuple {
+                            namespace,
+                            identifier,
+                            open_paren,
+                            args,
+                            close_paren,
+                        } => {
+                            let tagged_union =
+                                self.scope.try_get_type(&TypeExpressionKind::Basic {
+                                    identifier: namespace.clone(),
+                                })?;
+                            if let TypeKind::TaggedUnion(_enum_name, variant_types) = &tagged_union {
+                                let variant = variant_types
+                                    .iter()
+                                    .find(|t| t.to_string() == identifier.text)
+                                    .ok_or(TypeCheckError::NoSuchVariant {
+                                        variant_name: identifier.text.clone(),
+                                        union_name: namespace.text.to_string(),
+                                        loc: identifier.loc.clone(),
+                                    })?;
+                                let tag = variant_types
+                                    .iter()
+                                    .position(|t| t.to_string() == identifier.text)
+                                    .expect("element must exist");
+                                if let TypeKind::UnionVariant(variant_name, data_types) = variant {
+                                    if args.len() != data_types.len() {
+                                        return Err(TypeCheckError::ArgLengthMismatch {
+                                            expected: data_types.len(),
+                                            actual: args.len(),
+                                            loc: span_locs(&open_paren.loc, &close_paren.loc),
+                                        });
+                                    }
 
-                    let checked_case = CheckedExpression {
+                                    let mut variables = Vec::new();
+                                    for (i, arg) in args.iter().enumerate() {
+                                        let variable = CheckedVariable {
+                                            name: arg.text.to_owned(),
+                                            type_kind: data_types.get(i).unwrap().clone(),
+                                            declaration_loc: arg.loc.clone(),
+                                        };
+                                        self.scope.try_declare_variable(
+                                            variable.clone(),
+                                            arg.loc.clone(),
+                                        )?;
+
+                                        variables.push(variable);
+                                    }
+
+                                    CheckedPatternKind::TaggedUnionTuple(
+                                        tag,
+                                        CheckedVariable {
+                                            name: variant_name.to_string(),
+                                            type_kind: tagged_union.clone(),
+                                            declaration_loc: span_locs(
+                                                &namespace.loc,
+                                                &identifier.loc,
+                                            ),
+                                        },
+                                        variables,
+                                    )
+                                } else {
+                                    unreachable!()
+                                }
+                            } else {
+                                unreachable!()
+                            }
+                        }
+                    };
+                    let checked_result = self.type_check_statement(result)?;
+                    let checked_switch_case = CheckedExpression {
+                        type_kind: TypeKind::Unit,
                         kind: CheckedExpressionKind::MatchCase {
-                            pattern: Box::new(checked_pattern),
+                            pattern: checked_pattern,
                             result: Box::new(checked_result),
                         },
-                        type_kind: TypeKind::Unit, //TODO: allow returning values from matches
-                        loc: case.kind.get_loc(),
+                        loc: case.kind.get_loc().clone(),
                     };
+                    checked_cases.push(checked_switch_case);
 
-                    checked_cases.push(checked_case);
+                    self.scope = outer_scope;
                 } else {
                     unreachable!()
                 }
             }
             Ok(CheckedStatement {
-                kind: CheckedStatementKind::MatchCases {
-                    cases: checked_cases,
+                kind: CheckedStatementKind::MatchArms {
+                    arms: checked_cases,
                 },
             })
         } else {
@@ -1619,16 +1805,25 @@ impl TypeChecker {
                 };
             }
         }
-        if let TypeKind::Record(_expected_name, expected_generic_params, _) = &expected {
+        if let TypeKind::Record(expected_name, expected_generic_params, _) = &expected {
             if let TypeKind::Record(_actual_name, actual_generic_params, _) = &actual {
                 //TODO: There has to be a better condition
                 if !expected_generic_params.is_empty()
                     && expected_generic_params.len() == actual_generic_params.len()
-                    && !self.module.types.contains(&expected)
+                    && !self.module.types.contains_key(expected_name)
                 {
-                    self.module.types.push(expected);
+                    self.module
+                        .types
+                        .insert(expected_name.to_string(), expected);
                 }
                 return Ok(());
+            }
+        }
+        if let TypeKind::TaggedUnion(union_name, _) = &expected {
+            if let TypeKind::TaggedUnion(variant_name, _) = &actual {
+                if union_name == variant_name {
+                    return Ok(());
+                }
             }
         }
         Err(TypeCheckError::TypeMismatch {
@@ -2298,7 +2493,7 @@ impl TypeChecker {
                         self.scope.assign_context.pop();
 
                         let mut declare_new_type: bool = true;
-                        for type_kind in &self.module.types {
+                        for type_kind in self.module.types.values() {
                             if let TypeKind::Record(name, ..) = type_kind {
                                 if name == &format!("da_{}", element_type) {
                                     declare_new_type = false;
@@ -2307,29 +2502,32 @@ impl TypeChecker {
                             }
                         }
                         if declare_new_type {
-                            self.module.types.push(TypeKind::Record(
+                            self.module.types.insert(
                                 format!("da_{}", element_type),
-                                vec![],
-                                vec![
-                                    CheckedVariable {
-                                        name: "data".to_string(),
-                                        type_kind: TypeKind::Pointer(Box::new(
-                                            *element_type.clone(),
-                                        )),
-                                        declaration_loc: Loc::null(),
-                                    },
-                                    CheckedVariable {
-                                        name: "capacity".to_string(),
-                                        type_kind: TypeKind::U16,
-                                        declaration_loc: Loc::null(),
-                                    },
-                                    CheckedVariable {
-                                        name: "count".to_string(),
-                                        type_kind: TypeKind::U16,
-                                        declaration_loc: Loc::null(),
-                                    },
-                                ],
-                            ));
+                                TypeKind::Record(
+                                    format!("da_{}", element_type),
+                                    vec![],
+                                    vec![
+                                        CheckedVariable {
+                                            name: "data".to_string(),
+                                            type_kind: TypeKind::Pointer(Box::new(
+                                                *element_type.clone(),
+                                            )),
+                                            declaration_loc: Loc::null(),
+                                        },
+                                        CheckedVariable {
+                                            name: "capacity".to_string(),
+                                            type_kind: TypeKind::U16,
+                                            declaration_loc: Loc::null(),
+                                        },
+                                        CheckedVariable {
+                                            name: "count".to_string(),
+                                            type_kind: TypeKind::U16,
+                                            declaration_loc: Loc::null(),
+                                        },
+                                    ],
+                                ),
+                            );
                         }
 
                         Ok(CheckedExpression {
@@ -2754,12 +2952,91 @@ impl TypeChecker {
                         namespace: namespace.clone(),
                     }),
                 },
+                ExpressionKind::FunctionCall {
+                    callee,
+                    open_paren,
+                    args,
+                    close_paren,
+                } => {
+                    if let ExpressionKind::Variable { identifier } = &callee.kind {
+                        let module_types = self.module.types.clone();
+                        let tagged_union_type = module_types.get(&namespace.text);
+                        if let Some(TypeKind::TaggedUnion(name, variant_types)) = tagged_union_type
+                        //bloody rust
+                        {
+                            //e.g.
+                            //name = Shape
+                            //identifier.text = Circle
+                            //variant_types = Circle, Square, Rectangle
+                            let variant = variant_types
+                                .iter()
+                                .find(|t| t.to_string() == identifier.text)
+                                .ok_or(TypeCheckError::NoSuchVariant {
+                                    variant_name: identifier.text.clone(),
+                                    union_name: name.to_string(),
+                                    loc: identifier.loc.clone(),
+                                })?;
+                            let tag = variant_types
+                                .iter()
+                                .position(|t| t.to_string() == identifier.text)
+                                .expect("element must exist");
+                            if let TypeKind::UnionVariant(variant_name, data_types) = variant {
+                                if args.len() != data_types.len() {
+                                    return Err(TypeCheckError::ArgLengthMismatch {
+                                        expected: data_types.len(),
+                                        actual: args.len(),
+                                        loc: span_locs(&open_paren.loc, &close_paren.loc),
+                                    });
+                                }
+
+                                let mut checked_args = Vec::new();
+                                for (i, arg) in args.iter().enumerate() {
+                                    self.scope
+                                        .assign_context
+                                        .push(data_types.get(i).unwrap().clone());
+
+                                    let checked_arg = self.type_check_expression(arg)?;
+
+                                    self.scope.assign_context.pop();
+
+                                    self.expect_type(
+                                        data_types.get(i).unwrap().clone(),
+                                        checked_arg.type_kind.clone(),
+                                        arg.kind.get_loc().clone(),
+                                    )?;
+
+                                    checked_args.push(checked_arg);
+                                }
+
+                                return Ok(CheckedExpression {
+                                    kind: CheckedExpressionKind::TaggedUnionLiteral {
+                                        tag,
+                                        union_name: name.to_string(),
+                                        variant_name: variant_name.to_string(),
+                                        args: checked_args,
+                                    },
+                                    type_kind: tagged_union_type.unwrap().clone(),
+                                    loc: expression.kind.get_loc(),
+                                });
+                            } else {
+                                unreachable!()
+                            }
+                        } else {
+                            unreachable!(
+                                "{}::{}, {:?}",
+                                namespace.text, &identifier.text, self.module.types
+                            )
+                        }
+                    } else {
+                        unreachable!()
+                    }
+                }
                 _ => todo!(
                     "static accessor not implemented for member type: {:?}",
                     member.kind
                 ),
             },
-            ExpressionKind::MatchCase {
+            ExpressionKind::SwitchCase {
                 pattern: _,
                 fat_arrow: _,
                 result: _,
@@ -2873,6 +3150,12 @@ impl TypeChecker {
                     loc: expression.kind.get_loc(),
                 })
             }
+            ExpressionKind::EnumVariant {
+                identifier: _,
+                open_paren: _,
+                data: _,
+                close_paren: _,
+            } => todo!(),
         };
         return match &checked_expression_result {
             Ok(checked_expression) => {
@@ -2900,7 +3183,7 @@ impl TypeChecker {
 
     fn declare_slice_type(&mut self, el_type: &TypeKind) {
         let mut declare_new_type: bool = true;
-        for type_kind in &self.module.types {
+        for type_kind in self.module.types.values() {
             if let TypeKind::Record(name, ..) = type_kind {
                 if name == &format!("sl_{}", el_type) {
                     declare_new_type = false;
@@ -2909,27 +3192,30 @@ impl TypeChecker {
             }
         }
         if declare_new_type {
-            self.module.types.push(TypeKind::Record(
+            self.module.types.insert(
                 format!("sl_{}", el_type),
-                vec![],
-                vec![
-                    CheckedVariable {
-                        name: "data".to_string(),
-                        type_kind: TypeKind::Pointer(Box::new(el_type.clone())),
-                        declaration_loc: Loc::null(),
-                    },
-                    CheckedVariable {
-                        name: "offset".to_string(),
-                        type_kind: TypeKind::U16,
-                        declaration_loc: Loc::null(),
-                    },
-                    CheckedVariable {
-                        name: "count".to_string(),
-                        type_kind: TypeKind::U16,
-                        declaration_loc: Loc::null(),
-                    },
-                ],
-            ));
+                TypeKind::Record(
+                    format!("sl_{}", el_type),
+                    vec![],
+                    vec![
+                        CheckedVariable {
+                            name: "data".to_string(),
+                            type_kind: TypeKind::Pointer(Box::new(el_type.clone())),
+                            declaration_loc: Loc::null(),
+                        },
+                        CheckedVariable {
+                            name: "offset".to_string(),
+                            type_kind: TypeKind::U16,
+                            declaration_loc: Loc::null(),
+                        },
+                        CheckedVariable {
+                            name: "count".to_string(),
+                            type_kind: TypeKind::U16,
+                            declaration_loc: Loc::null(),
+                        },
+                    ],
+                ),
+            );
         }
     }
 
@@ -3086,7 +3372,7 @@ impl TypeChecker {
             | CheckedStatementKind::Enum { .. }
             | CheckedStatementKind::Break
             | CheckedStatementKind::Continue
-            | CheckedStatementKind::MatchCases { .. }
+            | CheckedStatementKind::MatchArms { .. }
             | CheckedStatementKind::Match { .. }
             | CheckedStatementKind::NoOp => false,
             CheckedStatementKind::ForIn {

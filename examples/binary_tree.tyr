@@ -1,0 +1,33 @@
+record Node {
+    left: ?Node,
+    value: u32,
+    right: ?Node,
+}
+
+function dfs(node: ^Node, depth: u32) {
+    for i in 0..depth {
+        print("    ");
+    }
+    println(node.value);
+
+    if node.left != nil {
+        node.left!.dfs(depth + 1);
+    }
+    if node.right != nil {
+        node.right!.dfs(depth + 1);
+    }
+}
+
+function main() {
+    var tree = Node { 
+        Node { 
+            Node { nil, 3, nil }, 
+            1, 
+            nil 
+        }, 
+        0, 
+        Node { Node { nil, 4, nil }, 2, Node { nil, 5, nil } } 
+    };
+
+    tree.dfs(0);
+}

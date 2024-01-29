@@ -1,0 +1,28 @@
+enum Optional {
+    Some(u32),
+    None,
+}
+
+function is_some(opt: Optional): bool {
+    match opt {
+        Optional::Some(x) => return true;
+        Optional::None() => return false;
+    }
+    return false;
+}
+
+function value_or_default(opt: Optional, or_else: u32): u32 {
+    match opt {
+        Optional::Some(x) => return x;
+        Optional::None() => return or_else;
+    }
+    return 0;
+}
+
+function main() {
+    var i = Optional::Some(10);
+
+    println(i.value_or_default(0));
+    i = Optional::None();
+    println(i.value_or_default(0));
+}

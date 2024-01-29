@@ -16,8 +16,8 @@ function main() {
         println(a[x]);
         x = x + 1;
     }
-    x = 0;
-    while x < 4 {
+
+    for x in 0..a.count {
         println(a[x]);
         x = x + 1;
     }
