@@ -1519,7 +1519,8 @@ impl TypeChecker {
                                 self.scope.try_get_type(&TypeExpressionKind::Basic {
                                     identifier: namespace.clone(),
                                 })?;
-                            if let TypeKind::TaggedUnion(_enum_name, variant_types) = &tagged_union {
+                            if let TypeKind::TaggedUnion(_enum_name, variant_types) = &tagged_union
+                            {
                                 let variant = variant_types
                                     .iter()
                                     .find(|t| t.to_string() == identifier.text)
