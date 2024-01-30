@@ -125,6 +125,7 @@ fn take_while(line: &str, col: usize, mut predicate: impl FnMut(char) -> bool) -
     let mut result = String::new();
     let mut current_col = col;
 
+    //TODO: nth is wildly inefficient, never need to go back to the start of a line so line should be a Peekable of char
     while let Some(next_char) = line.chars().nth(current_col) {
         if predicate(next_char) {
             result.push(next_char);
