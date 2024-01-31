@@ -896,11 +896,11 @@ fn rewrite_expression(expression: CheckedExpression) -> Result<CheckedExpression
             type_kind: expression.type_kind,
             loc: expression.loc,
         }),
-        CheckedExpressionKind::MatchCase { pattern, result } => {
-            let rewritten_result = rewrite_statement(*result)?;
+        CheckedExpressionKind::SwitchCase { pattern, result } => {
+            let rewritten_result = rewrite_expression(*result)?;
 
             Ok(CheckedExpression {
-                kind: CheckedExpressionKind::MatchCase {
+                kind: CheckedExpressionKind::SwitchCase {
                     pattern,
                     result: Box::new(rewritten_result),
                 },

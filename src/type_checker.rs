@@ -355,9 +355,9 @@ pub enum CheckedExpressionKind {
         name: String,
         member: CheckedVariable,
     },
-    MatchCase {
+    SwitchCase {
         pattern: CheckedPatternKind,
-        result: Box<CheckedStatement>,
+        result: Box<CheckedExpression>,
     },
     Nil,
     ForceUnwrap {
@@ -439,7 +439,7 @@ impl CheckedExpression {
             } => todo!(),
             CheckedExpressionKind::StringLiteral { value: _ } => todo!(),
             CheckedExpressionKind::StaticAccessor { name: _, member: _ } => todo!(),
-            CheckedExpressionKind::MatchCase {
+            CheckedExpressionKind::SwitchCase {
                 pattern: _,
                 result: _,
             } => todo!(),
@@ -1405,8 +1405,29 @@ impl TypeChecker {
                 cases,
             } => {
                 let checked_expression = self.type_check_expression(expression)?;
+
+                let outer_scope = self.scope.clone();
+                self.scope = Scope::new_inner_scope(outer_scope.clone());
+
+                if let TypeKind::Enum(_, variants) = &checked_expression.type_kind {
+                    for variant in variants {
+                        self.scope.try_declare_variable(
+                            CheckedVariable {
+                                name: variant.to_string(),
+                                mutable: false,
+                                type_kind: checked_expression.type_kind.clone(),
+                                declaration_loc: expression.kind.get_loc(),
+                            },
+                            expression.kind.get_loc(),
+                        )?
+                    }
+                }
+
                 let checked_cases =
                     self.type_check_match_cases(cases, checked_expression.type_kind.clone())?;
+
+                self.scope = outer_scope;
+
                 Ok(CheckedStatement {
                     kind: CheckedStatementKind::Match {
                         expression: checked_expression,
@@ -1587,7 +1608,8 @@ impl TypeChecker {
         if let StatementKind::SwitchCases { cases } = &cases.kind {
             let mut checked_cases = Vec::new();
             for case in cases {
-                if let ExpressionKind::SwitchCase {
+                if let ExpressionKind::SwitchArm {
+                    case_keyword: _,
                     pattern,
                     fat_arrow: _,
                     result,
@@ -1597,7 +1619,16 @@ impl TypeChecker {
                     self.scope = Scope::new_inner_scope(outer_scope.clone());
 
                     let checked_pattern: CheckedPatternKind = match pattern {
-                        PatternKind::Literal { token: _ } => todo!(),
+                        PatternKind::Literal { token } => match token.kind {
+                            TokenKind::Identifier => {
+                                let identifier = &token.text;
+                                let variant =
+                                    self.scope.try_get_variable(identifier, &token.loc)?;
+
+                                CheckedPatternKind::EnumIdentifier(variant.clone())
+                            }
+                            _ => todo!("{:?}", token.kind),
+                        },
                         PatternKind::EnumIdentifier {
                             namespace,
                             identifier,
@@ -1680,10 +1711,10 @@ impl TypeChecker {
                             }
                         }
                     };
-                    let checked_result = self.type_check_statement(result)?;
+                    let checked_result = self.type_check_expression(result)?;
                     let checked_switch_case = CheckedExpression {
                         type_kind: TypeKind::Unit,
-                        kind: CheckedExpressionKind::MatchCase {
+                        kind: CheckedExpressionKind::SwitchCase {
                             pattern: checked_pattern,
                             result: Box::new(checked_result),
                         },
@@ -3153,7 +3184,8 @@ impl TypeChecker {
                     member.kind
                 ),
             },
-            ExpressionKind::SwitchCase {
+            ExpressionKind::SwitchArm {
+                case_keyword: _,
                 pattern: _,
                 fat_arrow: _,
                 result: _,

@@ -193,10 +193,11 @@ pub enum ExpressionKind {
         dotdot: Token,
         upper: Box<Expression>,
     },
-    SwitchCase {
+    SwitchArm {
+        case_keyword: Token,
         pattern: PatternKind,
         fat_arrow: Token,
-        result: Box<Statement>,
+        result: Box<Expression>,
     },
     Nil {
         nil_keyword: Token,
@@ -320,11 +321,12 @@ impl Location for ExpressionKind {
                 colon_colon: _,
                 member,
             } => span_locs(&namespace.loc, &member.kind.get_loc()),
-            ExpressionKind::SwitchCase {
-                pattern,
+            ExpressionKind::SwitchArm {
+                case_keyword,
+                pattern: _,
                 fat_arrow: _,
-                result: _,
-            } => span_locs(&pattern.get_loc(), &pattern.get_loc()), //TODO: result is a statement so can't get its Loc
+                result,
+            } => span_locs(&case_keyword.loc, &result.kind.get_loc()), //TODO: result is a statement so can't get its Loc
             ExpressionKind::Nil { nil_keyword } => nil_keyword.loc.clone(),
             ExpressionKind::ForceUnwrap { expression, bang } => {
                 span_locs(&expression.kind.get_loc(), &bang.loc)
@@ -1485,21 +1487,23 @@ impl Parser {
 
         let mut cases: Vec<Expression> = Vec::new();
         while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
+            let case_keyword = Self::expect_token(tokens, TokenKind::CaseKeyword)?;
             let pattern = self.parse_match_pattern(tokens)?;
-            let fat_arrow = Self::expect_token(tokens, TokenKind::FatArrow)?;
-            let result = self.parse_statement(tokens)?;
+            let fat_arrow = Self::expect_token(tokens, TokenKind::Colon)?;
+            let result = self.parse_binary_expression(tokens, 0)?;
 
             cases.push(Expression {
-                kind: ExpressionKind::SwitchCase {
+                kind: ExpressionKind::SwitchArm {
+                    case_keyword,
                     pattern,
                     fat_arrow,
                     result: Box::new(result),
                 },
             });
 
-            // if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
-            //     Self::expect_token(tokens, TokenKind::Comma)?;
-            // }
+            if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
+                Self::expect_token(tokens, TokenKind::Comma)?;
+            }
         }
         let _close_curly = Self::expect_token(tokens, TokenKind::CloseCurly)?;
 
@@ -1518,13 +1522,12 @@ impl Parser {
                 TokenKind::Identifier => {
                     let identifier = token.clone();
 
-                    if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::FatArrow
-                    {
+                    if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::Colon {
                         Self::expect_token(tokens, TokenKind::ColonColon)?;
                         let enum_name = Self::expect_token(tokens, TokenKind::Identifier)?;
 
                         if tokens.peek().is_some()
-                            && tokens.peek().unwrap().kind != TokenKind::FatArrow
+                            && tokens.peek().unwrap().kind != TokenKind::Colon
                         {
                             let open_paren = Self::expect_token(tokens, TokenKind::OpenParen)?;
                             let mut args: Vec<Token> = Vec::new();

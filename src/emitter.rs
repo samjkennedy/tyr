@@ -451,7 +451,7 @@ impl CEmitter {
     ) -> Result<(), io::Error> {
         for arm in arms {
             match &arm.kind {
-                CheckedExpressionKind::MatchCase { pattern, result } => {
+                CheckedExpressionKind::SwitchCase { pattern, result } => {
                     write!(self.out_file, "     case ")?;
                     match pattern {
                         CheckedPatternKind::EnumIdentifier(enum_variant) => {
@@ -484,7 +484,10 @@ impl CEmitter {
                         }
                     }
 
-                    self.emit_statement(result)?;
+                    writeln!(self.out_file, "{{")?;
+                    self.emit_expression(result)?;
+                    writeln!(self.out_file, ";}}")?;
+
                     writeln!(self.out_file, "}};")?;
                     writeln!(self.out_file, "break;")?;
                 }
@@ -809,7 +812,7 @@ impl CEmitter {
             CheckedExpressionKind::StaticAccessor { name, member } => {
                 write!(self.out_file, "{}_{}", name, member.name) //TODO member should be an expression we handle differently
             }
-            CheckedExpressionKind::MatchCase {
+            CheckedExpressionKind::SwitchCase {
                 pattern: _,
                 result: _,
             } => todo!(),
