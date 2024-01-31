@@ -199,6 +199,7 @@ pub enum TypeCheckError {
         union_name: String,
         loc: Loc,
     },
+    CannotReassignConstant(Loc),
 }
 
 #[derive(Debug, Clone)]
@@ -209,9 +210,10 @@ pub enum CheckedStatementKind {
     Expression {
         expression: CheckedExpression,
     },
-    VariableDeclaration {
+    ValueDeclaration {
         name: String,
         type_kind: TypeKind,
+        mutable: bool,
         initialiser: CheckedExpression,
     },
     FunctionDeclaration {
@@ -395,9 +397,95 @@ pub struct CheckedExpression {
     pub loc: Loc,
 }
 
+impl CheckedExpression {
+    fn is_const(&self) -> bool {
+        match &self.kind {
+            CheckedExpressionKind::BoolLiteral { value: _ }
+            | CheckedExpressionKind::U8Literal { value: _ }
+            | CheckedExpressionKind::U16Literal { value: _ }
+            | CheckedExpressionKind::U32Literal { value: _ }
+            | CheckedExpressionKind::U64Literal { value: _ }
+            | CheckedExpressionKind::I8Literal { value: _ }
+            | CheckedExpressionKind::I16Literal { value: _ }
+            | CheckedExpressionKind::I32Literal { value: _ }
+            | CheckedExpressionKind::I64Literal { value: _ }
+            | CheckedExpressionKind::CharLiteral { value: _ }
+            | CheckedExpressionKind::F32Literal { value: _ }
+            | CheckedExpressionKind::F64Literal { value: _ } => true,
+            CheckedExpressionKind::ArrayLiteral { elements: _ } => todo!(),
+            CheckedExpressionKind::RecordLiteral { arguments: _ } => todo!(),
+            CheckedExpressionKind::Unary { op: _, operand: _ } => todo!(),
+            CheckedExpressionKind::Binary {
+                left: _,
+                op: _,
+                right: _,
+            } => todo!(),
+            CheckedExpressionKind::Parenthesised { expression: _ } => todo!(),
+            CheckedExpressionKind::Variable { variable } => !variable.mutable,
+            CheckedExpressionKind::Assignment { lhs: _, rhs: _ } => todo!(),
+            CheckedExpressionKind::FunctionCall { name: _, args: _ } => todo!(),
+            CheckedExpressionKind::ArrayIndex { array, index: _ } => array.is_const(),
+            CheckedExpressionKind::Accessor {
+                accessee: _,
+                member: _,
+            } => todo!(),
+            CheckedExpressionKind::SafeAccessor {
+                accessee: _,
+                member: _,
+            } => todo!(),
+            CheckedExpressionKind::NilCoalesce {
+                optional: _,
+                default: _,
+            } => todo!(),
+            CheckedExpressionKind::StringLiteral { value: _ } => todo!(),
+            CheckedExpressionKind::StaticAccessor { name: _, member: _ } => todo!(),
+            CheckedExpressionKind::MatchCase {
+                pattern: _,
+                result: _,
+            } => todo!(),
+            CheckedExpressionKind::Nil => todo!(),
+            CheckedExpressionKind::ForceUnwrap { expression: _ } => todo!(),
+            CheckedExpressionKind::Range { lower: _, upper: _ } => todo!(),
+            CheckedExpressionKind::DefaultArrayInitializer { value: _ } => todo!(),
+            CheckedExpressionKind::Cast {
+                expression: _,
+                type_kind: _,
+            } => todo!(),
+            CheckedExpressionKind::TaggedUnionLiteral {
+                tag: _,
+                union_name: _,
+                variant_name: _,
+                args: _,
+            } => todo!(),
+        }
+    }
+
+    fn get_const_value(&self) -> Option<CheckedExpression> {
+        if !self.is_const() {
+            return Option::None;
+        }
+        match &self.kind {
+            CheckedExpressionKind::BoolLiteral { value: _ }
+            | CheckedExpressionKind::U8Literal { value: _ }
+            | CheckedExpressionKind::U16Literal { value: _ }
+            | CheckedExpressionKind::U32Literal { value: _ }
+            | CheckedExpressionKind::U64Literal { value: _ }
+            | CheckedExpressionKind::I8Literal { value: _ }
+            | CheckedExpressionKind::I16Literal { value: _ }
+            | CheckedExpressionKind::I32Literal { value: _ }
+            | CheckedExpressionKind::I64Literal { value: _ }
+            | CheckedExpressionKind::CharLiteral { value: _ }
+            | CheckedExpressionKind::F32Literal { value: _ }
+            | CheckedExpressionKind::F64Literal { value: _ } => Some(self.clone()),
+            _ => todo!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedVariable {
     pub name: String,
+    pub mutable: bool,
     pub type_kind: TypeKind,
     pub declaration_loc: Loc,
 }
@@ -607,6 +695,7 @@ impl Scope {
                     module.try_declare_variable(
                         CheckedVariable {
                             name: variant.to_string(),
+                            mutable: false,
                             type_kind: type_kind.clone(),
                             declaration_loc: loc.clone(),
                         },
@@ -746,6 +835,7 @@ impl Scope {
                         if let TypeKind::GenericParameter(name) = member.type_kind {
                             let erased_member = CheckedVariable {
                                 name: member.name,
+                                mutable: false,
                                 type_kind: erased_generics
                                     .get(&name)
                                     .expect("should not fail")
@@ -1004,8 +1094,8 @@ impl TypeChecker {
                     },
                 })
             }
-            StatementKind::VariableDeclaration {
-                var_keyword: _,
+            StatementKind::ValueDeclaration {
+                keyword,
                 identifier,
                 type_annotation,
                 equals: _,
@@ -1047,9 +1137,16 @@ impl TypeChecker {
                         self.scope.try_get_generic_erasure(&param).expect("hmm");
                 }
 
+                let mutable = match keyword.kind {
+                    TokenKind::VarKeyword => true,
+                    TokenKind::ConstKeyword => false,
+                    _ => unreachable!("unhandled value keyword {:?}", keyword.kind),
+                };
+
                 self.scope.try_declare_variable(
                     CheckedVariable {
                         name: identifier.text.clone(),
+                        mutable,
                         type_kind: checked_initialiser.type_kind.clone(),
                         declaration_loc: identifier.loc.clone(),
                     },
@@ -1057,8 +1154,9 @@ impl TypeChecker {
                 )?;
 
                 Ok(CheckedStatement {
-                    kind: CheckedStatementKind::VariableDeclaration {
+                    kind: CheckedStatementKind::ValueDeclaration {
                         name: identifier.text.clone(),
+                        mutable,
                         type_kind: checked_initialiser.type_kind.clone(), //TODO: use the annotation if present
                         initialiser: checked_initialiser,
                     },
@@ -1224,6 +1322,7 @@ impl TypeChecker {
 
                         checked_members.push(CheckedVariable {
                             name: member_identifier.text.clone(),
+                            mutable: false,
                             type_kind,
                             declaration_loc: member_identifier.loc.clone(),
                         })
@@ -1376,6 +1475,7 @@ impl TypeChecker {
                     TypeKind::Range(range_type) => {
                         let checked_iterator = CheckedVariable {
                             name: iterator.text.clone(),
+                            mutable: true,
                             type_kind: *range_type.clone(),
                             declaration_loc: iterator.loc.clone(),
                         };
@@ -1397,6 +1497,7 @@ impl TypeChecker {
                     | TypeKind::DynamicArray(inner_type) => {
                         let checked_iterator = CheckedVariable {
                             name: iterator.text.clone(),
+                            mutable: false,
                             type_kind: *inner_type.clone(),
                             declaration_loc: iterator.loc.clone(),
                         };
@@ -1546,6 +1647,7 @@ impl TypeChecker {
                                     for (i, arg) in args.iter().enumerate() {
                                         let variable = CheckedVariable {
                                             name: arg.text.to_owned(),
+                                            mutable: false,
                                             type_kind: data_types.get(i).unwrap().clone(),
                                             declaration_loc: arg.loc.clone(),
                                         };
@@ -1561,6 +1663,7 @@ impl TypeChecker {
                                         tag,
                                         CheckedVariable {
                                             name: variant_name.to_string(),
+                                            mutable: false,
                                             type_kind: tagged_union.clone(),
                                             declaration_loc: span_locs(
                                                 &namespace.loc,
@@ -1713,6 +1816,7 @@ impl TypeChecker {
                     let type_kind = self.scope.try_get_type(type_expression_kind)?;
                     let arg = CheckedVariable {
                         name,
+                        mutable: false,
                         type_kind: type_kind.clone(),
                         declaration_loc: span_locs(
                             &arg_identifier.loc,
@@ -2244,6 +2348,10 @@ impl TypeChecker {
             } => {
                 let checked_lhs = self.type_check_expression(lhs)?;
 
+                if checked_lhs.is_const() {
+                    return Err(TypeCheckError::CannotReassignConstant(lhs.kind.get_loc()));
+                }
+
                 self.scope
                     .assign_context
                     .push(checked_lhs.type_kind.clone());
@@ -2511,6 +2619,7 @@ impl TypeChecker {
                                     vec![
                                         CheckedVariable {
                                             name: "data".to_string(),
+                                            mutable: false,
                                             type_kind: TypeKind::Pointer(Box::new(
                                                 *element_type.clone(),
                                             )),
@@ -2518,11 +2627,13 @@ impl TypeChecker {
                                         },
                                         CheckedVariable {
                                             name: "capacity".to_string(),
+                                            mutable: false,
                                             type_kind: TypeKind::U16,
                                             declaration_loc: Loc::null(),
                                         },
                                         CheckedVariable {
                                             name: "count".to_string(),
+                                            mutable: false,
                                             type_kind: TypeKind::U16,
                                             declaration_loc: Loc::null(),
                                         },
@@ -2542,7 +2653,12 @@ impl TypeChecker {
                     _ => unreachable!(),
                 }
             }
-            ExpressionKind::ArrayIndex { array, index } => {
+            ExpressionKind::ArrayIndex {
+                array,
+                open_square: _,
+                index,
+                close_square: _,
+            } => {
                 let checked_array = self.type_check_expression(array)?;
 
                 match &checked_array.type_kind.clone() {
@@ -3201,16 +3317,19 @@ impl TypeChecker {
                     vec![
                         CheckedVariable {
                             name: "data".to_string(),
+                            mutable: false,
                             type_kind: TypeKind::Pointer(Box::new(el_type.clone())),
                             declaration_loc: Loc::null(),
                         },
                         CheckedVariable {
                             name: "offset".to_string(),
+                            mutable: false,
                             type_kind: TypeKind::U16,
                             declaration_loc: Loc::null(),
                         },
                         CheckedVariable {
                             name: "count".to_string(),
+                            mutable: false,
                             type_kind: TypeKind::U16,
                             declaration_loc: Loc::null(),
                         },
@@ -3366,7 +3485,7 @@ impl TypeChecker {
             },
             CheckedStatementKind::Return { .. } => true,
             CheckedStatementKind::Expression { .. }
-            | CheckedStatementKind::VariableDeclaration { .. }
+            | CheckedStatementKind::ValueDeclaration { .. }
             | CheckedStatementKind::FunctionDeclaration { .. }
             | CheckedStatementKind::While { .. }
             | CheckedStatementKind::Record { .. }

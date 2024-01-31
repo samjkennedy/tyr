@@ -268,54 +268,60 @@ impl CEmitter {
                 self.emit_expression(expression)?;
                 writeln!(self.out_file, ";")?;
             }
-            CheckedStatementKind::VariableDeclaration {
+            CheckedStatementKind::ValueDeclaration {
                 name,
+                mutable,
                 type_kind,
                 initialiser,
-            } => match type_kind {
-                TypeKind::Array(size, el_type) => {
-                    write!(
-                        self.out_file,
-                        "{} {}[{}] = ",
-                        Self::get_c_type(el_type),
-                        name,
-                        size
-                    )?;
-
-                    self.emit_expression(initialiser)?;
-                    writeln!(self.out_file, ";")?;
+            } => {
+                if !mutable {
+                    write!(self.out_file, "const ")?;
                 }
-                TypeKind::Optional(base_type) => match **base_type {
-                    TypeKind::File => {
-                        write!(self.out_file, "{} {} = ", Self::get_c_type(type_kind), name)?;
+                match type_kind {
+                    TypeKind::Array(size, el_type) => {
+                        write!(
+                            self.out_file,
+                            "{} {}[{}] = ",
+                            Self::get_c_type(el_type),
+                            name,
+                            size
+                        )?;
+
                         self.emit_expression(initialiser)?;
                         writeln!(self.out_file, ";")?;
                     }
+                    TypeKind::Optional(base_type) => match **base_type {
+                        TypeKind::File => {
+                            write!(self.out_file, "{} {} = ", Self::get_c_type(type_kind), name)?;
+                            self.emit_expression(initialiser)?;
+                            writeln!(self.out_file, ";")?;
+                        }
+                        _ => {
+                            write!(
+                                self.out_file,
+                                "{} optional_{} = ",
+                                Self::get_c_type(base_type),
+                                name
+                            )?;
+                            self.emit_expression(initialiser)?;
+                            writeln!(self.out_file, ";",)?;
+                            write!(
+                                self.out_file,
+                                "{} *{} = &optional_{};",
+                                Self::get_c_type(base_type),
+                                name,
+                                name
+                            )?;
+                        }
+                    },
                     _ => {
-                        write!(
-                            self.out_file,
-                            "{} optional_{} = ",
-                            Self::get_c_type(base_type),
-                            name
-                        )?;
-                        self.emit_expression(initialiser)?;
-                        writeln!(self.out_file, ";",)?;
-                        write!(
-                            self.out_file,
-                            "{} *{} = &optional_{};",
-                            Self::get_c_type(base_type),
-                            name,
-                            name
-                        )?;
-                    }
-                },
-                _ => {
-                    write!(self.out_file, "{} {} = ", Self::get_c_type(type_kind), name)?;
+                        write!(self.out_file, "{} {} = ", Self::get_c_type(type_kind), name)?;
 
-                    self.emit_expression(initialiser)?;
-                    writeln!(self.out_file, ";")?;
+                        self.emit_expression(initialiser)?;
+                        writeln!(self.out_file, ";")?;
+                    }
                 }
-            },
+            }
             CheckedStatementKind::FunctionDeclaration {
                 name,
                 args,
@@ -484,7 +490,7 @@ impl CEmitter {
                 }
                 _ => unreachable!("{:?}", &arm.kind),
             }
-        };
+        }
         Ok(())
     }
 

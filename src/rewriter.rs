@@ -41,16 +41,18 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
                 expression: rewrite_expression(expression)?,
             },
         }),
-        CheckedStatementKind::VariableDeclaration {
+        CheckedStatementKind::ValueDeclaration {
             name,
+            mutable,
             type_kind,
             initialiser,
         } => {
             let rewritten_initialiser = rewrite_expression(initialiser)?;
 
             Ok(CheckedStatement {
-                kind: CheckedStatementKind::VariableDeclaration {
+                kind: CheckedStatementKind::ValueDeclaration {
                     name,
+                    mutable,
                     type_kind,
                     initialiser: rewritten_initialiser,
                 },
@@ -187,8 +189,9 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
 
                         //var x = 0;
                         let declare_iterator = CheckedStatement {
-                            kind: CheckedStatementKind::VariableDeclaration {
+                            kind: CheckedStatementKind::ValueDeclaration {
                                 name: iterator.name.clone(),
+                                mutable: true,
                                 type_kind: *inner_type.clone(),
                                 initialiser: *lower,
                             },
@@ -294,12 +297,14 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
                     //var it = 0;
                     let it_variable = CheckedVariable {
                         name: "it".to_string(),
+                        mutable: false,
                         type_kind: TypeKind::I32,
                         declaration_loc: Loc::null(),
                     };
                     let declare_iterator = CheckedStatement {
-                        kind: CheckedStatementKind::VariableDeclaration {
+                        kind: CheckedStatementKind::ValueDeclaration {
                             name: "it".to_string(),
+                            mutable: true,
                             type_kind: TypeKind::I32,
                             initialiser: CheckedExpression {
                                 kind: CheckedExpressionKind::I32Literal { value: 0 },
@@ -321,8 +326,9 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
 
                     //var x = array[it];
                     let declare_iterator = CheckedStatement {
-                        kind: CheckedStatementKind::VariableDeclaration {
+                        kind: CheckedStatementKind::ValueDeclaration {
                             name: iterator.name.clone(),
+                            mutable: false, //TODO: is this a good idea?
                             type_kind: *inner_type.clone(),
                             initialiser: CheckedExpression {
                                 kind: CheckedExpressionKind::ArrayIndex {
@@ -440,12 +446,14 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
                     //var it = 0;
                     let it_variable = CheckedVariable {
                         name: "it".to_string(),
+                        mutable: false,
                         type_kind: TypeKind::I32,
                         declaration_loc: Loc::null(),
                     };
                     let declare_iterator = CheckedStatement {
-                        kind: CheckedStatementKind::VariableDeclaration {
+                        kind: CheckedStatementKind::ValueDeclaration {
                             name: "it".to_string(),
+                            mutable: true,
                             type_kind: TypeKind::I32,
                             initialiser: CheckedExpression {
                                 kind: CheckedExpressionKind::I32Literal { value: 0 },
@@ -467,8 +475,9 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
 
                     //var x = array[it];
                     let declare_iterator = CheckedStatement {
-                        kind: CheckedStatementKind::VariableDeclaration {
+                        kind: CheckedStatementKind::ValueDeclaration {
                             name: iterator.name.clone(),
+                            mutable: false, //TODO: same here
                             type_kind: *inner_type.clone(),
                             initialiser: CheckedExpression {
                                 kind: CheckedExpressionKind::ArrayIndex {
@@ -587,12 +596,14 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
                     //var it = 0;
                     let it_variable = CheckedVariable {
                         name: "it".to_string(),
+                        mutable: false,
                         type_kind: TypeKind::I32,
                         declaration_loc: Loc::null(),
                     };
                     let declare_iterator = CheckedStatement {
-                        kind: CheckedStatementKind::VariableDeclaration {
+                        kind: CheckedStatementKind::ValueDeclaration {
                             name: "it".to_string(),
+                            mutable: true,
                             type_kind: TypeKind::I32,
                             initialiser: CheckedExpression {
                                 kind: CheckedExpressionKind::I32Literal { value: 0 },
@@ -614,8 +625,9 @@ fn rewrite_statement(statement: CheckedStatement) -> Result<CheckedStatement, Re
 
                     //var x = array[it];
                     let declare_iterator = CheckedStatement {
-                        kind: CheckedStatementKind::VariableDeclaration {
+                        kind: CheckedStatementKind::ValueDeclaration {
                             name: iterator.name.clone(),
+                            mutable: false,
                             type_kind: *inner_type.clone(),
                             initialiser: CheckedExpression {
                                 kind: CheckedExpressionKind::ArrayIndex {

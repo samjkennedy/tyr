@@ -57,7 +57,7 @@ impl fmt::Display for LogLevel {
 
 pub fn display_diagnostic(file_name: &str, diagnostic: Diagnostic) {
     match diagnostic.kind {
-        DiagnosticKind::Lex(lex_error) => todo!(),
+        DiagnosticKind::Lex(_lex_error) => todo!(),
         DiagnosticKind::Parse(parse_error) => {
             print_parse_error(file_name, &parse_error);
         }
@@ -105,16 +105,16 @@ pub fn print_parse_error(file_name: &str, e: &ParseError) {
             )
         }
         ParseError::ExpectedSemicolon(loc) => {
-            let error_line = get_error_line(file_name, &loc);
+            let error_line = get_error_line(file_name, loc);
             let highlight = format!(
                 "    |\n{}\n    |{}",
-                format_error_line(&loc, &error_line),
-                format_highlight(&loc)
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
             );
             eprintln!(
                 "{} expected semicolon at {}\n{}",
                 log_level,
-                format_location(file_name, &loc),
+                format_location(file_name, loc),
                 highlight,
             )
         }
@@ -524,6 +524,20 @@ pub fn print_typecheck_error(file_name: &str, error: &TypeCheckError) -> String 
                 log_level,
                 variant_name,
                 union_name,
+                format_location(file_name, loc),
+                highlight,
+            )
+        }
+        TypeCheckError::CannotReassignConstant(loc) => {
+            let error_line = get_error_line(file_name, loc);
+            let highlight = format!(
+                "    |\n{}\n    |{}",
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
+            );
+            format!(
+                "{} cannot reassign constant value at {}\n{}",
+                log_level,
                 format_location(file_name, loc),
                 highlight,
             )

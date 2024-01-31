@@ -10,8 +10,8 @@ pub enum StatementKind {
     Block {
         statements: Vec<Statement>,
     },
-    VariableDeclaration {
-        var_keyword: Token,
+    ValueDeclaration {
+        keyword: Token,
         identifier: Token,
         type_annotation: Option<Expression>,
         equals: Token,
@@ -158,7 +158,9 @@ pub enum ExpressionKind {
     },
     ArrayIndex {
         array: Box<Expression>,
+        open_square: Token,
         index: Box<Expression>,
+        close_square: Token,
     },
     RecordLiteral {
         record_identifier: Token,
@@ -286,9 +288,12 @@ impl Location for ExpressionKind {
                 args: _,
                 close_paren,
             } => span_locs(&callee.kind.get_loc(), &close_paren.loc),
-            ExpressionKind::ArrayIndex { array, index } => {
-                span_locs(&array.kind.get_loc(), &index.kind.get_loc())
-            }
+            ExpressionKind::ArrayIndex {
+                array,
+                open_square,
+                index,
+                close_square,
+            } => span_locs(&array.kind.get_loc(), &close_square.loc),
             ExpressionKind::RecordLiteral {
                 record_identifier,
                 open_curly: _,
@@ -531,9 +536,12 @@ impl Parser {
             None => return Err(ParseError::UnexpectedEOF),
         };
         match current_token.kind {
-            TokenKind::VarKeyword => {
-                let var_keyword = Self::expect_token(tokens, TokenKind::VarKeyword)?;
-                let _loc = var_keyword.loc.clone();
+            TokenKind::VarKeyword | TokenKind::ConstKeyword => {
+                let keyword = match current_token.kind {
+                    TokenKind::VarKeyword => Self::expect_token(tokens, TokenKind::VarKeyword)?,
+                    TokenKind::ConstKeyword => Self::expect_token(tokens, TokenKind::ConstKeyword)?,
+                    _ => unreachable!("Unhandled value keyword {:?}", current_token.kind),
+                };
 
                 let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
 
@@ -553,8 +561,8 @@ impl Parser {
                     let semicolon = Self::expect_token(tokens, TokenKind::Semicolon)?;
 
                     Ok(Statement {
-                        kind: StatementKind::VariableDeclaration {
-                            var_keyword,
+                        kind: StatementKind::ValueDeclaration {
+                            keyword,
                             identifier,
                             type_annotation,
                             equals,
@@ -568,7 +576,6 @@ impl Parser {
             }
             TokenKind::FunctionKeyword => {
                 let function_keyword = Self::expect_token(tokens, TokenKind::FunctionKeyword)?;
-                let _loc = function_keyword.loc.clone();
 
                 let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
                 let open_paren = Self::expect_token(tokens, TokenKind::OpenParen)?;
@@ -589,7 +596,6 @@ impl Parser {
                     }
 
                     let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
-                    let _loc = identifier.loc.clone();
                     let type_annotation = Self::parse_type_annotation(tokens)?;
 
                     args.push(Expression {
@@ -633,7 +639,6 @@ impl Parser {
             TokenKind::OpenCurly => self.parse_block_statement(tokens),
             TokenKind::IfKeyword => {
                 let if_keyword = Self::expect_token(tokens, TokenKind::IfKeyword)?;
-                let _loc = if_keyword.loc.clone();
                 self.allow_record_literals.push(false);
                 let condition = self.parse_binary_expression(tokens, 0)?;
                 self.allow_record_literals.pop();
@@ -662,7 +667,6 @@ impl Parser {
             }
             TokenKind::WhileKeyword => {
                 let while_keyword = Self::expect_token(tokens, TokenKind::WhileKeyword)?;
-                let _loc = while_keyword.loc.clone();
                 let condition = self.parse_binary_expression(tokens, 0)?;
 
                 self.allow_record_literals.push(false);
@@ -772,16 +776,14 @@ impl Parser {
                 })
             }
             TokenKind::BreakKeyword => {
-                let break_keyword = Self::expect_token(tokens, TokenKind::BreakKeyword)?;
-                let _loc = break_keyword.loc.clone();
+                let _break_keyword = Self::expect_token(tokens, TokenKind::BreakKeyword)?;
                 Self::expect_token(tokens, TokenKind::Semicolon)?;
                 Ok(Statement {
                     kind: StatementKind::Break,
                 })
             }
             TokenKind::ContinueKeyword => {
-                let continue_keyword = Self::expect_token(tokens, TokenKind::ContinueKeyword)?;
-                let _loc = continue_keyword.loc.clone();
+                let _continue_keyword = Self::expect_token(tokens, TokenKind::ContinueKeyword)?;
                 Self::expect_token(tokens, TokenKind::Semicolon)?;
                 Ok(Statement {
                     kind: StatementKind::Continue,
@@ -789,7 +791,6 @@ impl Parser {
             }
             TokenKind::EnumKeyword => {
                 let enum_keyword = Self::expect_token(tokens, TokenKind::EnumKeyword)?;
-                let _loc = enum_keyword.loc.clone();
 
                 let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
                 Self::expect_token(tokens, TokenKind::OpenCurly)?;
@@ -893,7 +894,6 @@ impl Parser {
             }
             _ => {
                 let expression = self.parse_binary_expression(tokens, 0)?;
-                let _loc = expression.kind.get_loc().clone();
 
                 let semicolon = Self::expect_token(tokens, TokenKind::Semicolon)?;
 
@@ -1398,15 +1398,17 @@ impl Parser {
         left: Expression,
         tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
     ) -> Result<Expression, ParseError> {
-        let _open_square = Self::expect_token(tokens, TokenKind::OpenSquare)?;
+        let open_square = Self::expect_token(tokens, TokenKind::OpenSquare)?;
         let index = self.parse_binary_expression(tokens, 0)?;
 
-        Self::expect_token(tokens, TokenKind::CloseSquare)?;
+        let close_square = Self::expect_token(tokens, TokenKind::CloseSquare)?;
 
         Ok(Expression {
             kind: ExpressionKind::ArrayIndex {
                 array: Box::new(left),
+                open_square,
                 index: Box::new(index),
+                close_square,
             },
         })
     }

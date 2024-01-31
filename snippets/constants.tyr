@@ -1,0 +1,9 @@
+function main() {
+    const x = 10;
+    println(x);
+
+    for i in 0..10 {
+        println(i);
+        i = i + 1;
+    }
+} 
