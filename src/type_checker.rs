@@ -1286,48 +1286,71 @@ impl TypeChecker {
                 self.scope
                     .try_declare_type(record.clone(), identifier.loc.clone(), false)?;
 
-                for (member_identifier, type_annotation) in members {
-                    if let ExpressionKind::TypeAnnotation {
-                        colon: _,
-                        type_expression_kind,
-                    } = &type_annotation.kind
-                    {
-                        let mut type_kind = TypeKind::Unit;
-
-                        if !generic_params.is_empty() {
-                            if let TypeExpressionKind::Basic {
-                                identifier: generic_identifier,
-                            } = type_expression_kind
+                for member in members {
+                    match member {
+                        parser::RecordMemberKind::BasicMember {
+                            identifier: member_identifier,
+                            type_expression: type_annotation,
+                        } => {
+                            if let ExpressionKind::TypeAnnotation {
+                                colon: _,
+                                type_expression_kind,
+                            } = &type_annotation.kind
                             {
-                                for gtp in generic_type_parameters {
-                                    if gtp.text == generic_identifier.text {
-                                        type_kind = self.scope.try_get_type(
-                                            &TypeExpressionKind::GenericParameter {
-                                                type_name: identifier.text.clone(),
-                                                param: gtp.clone(),
-                                            },
-                                        )?;
-                                        break;
+                                let mut type_kind = TypeKind::Unit;
+
+                                if !generic_params.is_empty() {
+                                    if let TypeExpressionKind::Basic {
+                                        identifier: generic_identifier,
+                                    } = type_expression_kind
+                                    {
+                                        for gtp in generic_type_parameters {
+                                            if gtp.text == generic_identifier.text {
+                                                type_kind = self.scope.try_get_type(
+                                                    &TypeExpressionKind::GenericParameter {
+                                                        type_name: identifier.text.clone(),
+                                                        param: gtp.clone(),
+                                                    },
+                                                )?;
+                                                break;
+                                            }
+                                        }
+                                        if type_kind == TypeKind::Unit {
+                                            type_kind =
+                                                self.scope.try_get_type(type_expression_kind)?;
+                                        }
+                                    } else {
+                                        type_kind =
+                                            self.scope.try_get_type(type_expression_kind)?;
                                     }
-                                }
-                                if type_kind == TypeKind::Unit {
+                                } else {
                                     type_kind = self.scope.try_get_type(type_expression_kind)?;
                                 }
-                            } else {
-                                type_kind = self.scope.try_get_type(type_expression_kind)?;
-                            }
-                        } else {
-                            type_kind = self.scope.try_get_type(type_expression_kind)?;
-                        }
 
-                        checked_members.push(CheckedVariable {
-                            name: member_identifier.text.clone(),
-                            mutable: false,
-                            type_kind,
-                            declaration_loc: member_identifier.loc.clone(),
-                        })
-                    } else {
-                        panic!("non-type annotation expression made it into here")
+                                checked_members.push(CheckedVariable {
+                                    name: member_identifier.text.clone(),
+                                    mutable: false,
+                                    type_kind,
+                                    declaration_loc: member_identifier.loc.clone(),
+                                })
+                            } else {
+                                panic!("non-type annotation expression made it into here")
+                            }
+                        }
+                        parser::RecordMemberKind::VariantMember {
+                            case_keyword,
+                            identifier,
+                            type_annotation,
+                            open_curly,
+                            members,
+                            close_curly,
+                        } => todo!(),
+                        parser::RecordMemberKind::CaseMember {
+                            identifier,
+                            open_curly,
+                            members,
+                            close_curly,
+                        } => todo!(),
                     }
                 }
 
@@ -1340,11 +1363,11 @@ impl TypeChecker {
                 self.scope
                     .try_declare_type(record.clone(), identifier.loc.clone(), true)?;
 
-                if generic_params.is_empty() {
-                    self.module
-                        .types
-                        .insert(identifier.text.to_string(), record);
-                }
+                // if generic_params.is_empty() {
+                //     self.module
+                //         .types
+                //         .insert(identifier.text.to_string(), record);
+                // }
 
                 Ok(CheckedStatement {
                     kind: CheckedStatementKind::Record {
@@ -3305,6 +3328,7 @@ impl TypeChecker {
                 data: _,
                 close_paren: _,
             } => todo!(),
+            ExpressionKind::RecordMember { kind } => todo!(),
         };
         return match &checked_expression_result {
             Ok(checked_expression) => {

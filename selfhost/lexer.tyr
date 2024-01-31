@@ -9,8 +9,15 @@ enum TokenKind {
 }
 
 record Token {
-    kind: TokenKind,
-    operand: i32,
+    case kind: TokenKind {
+        IntLiteral { value: i32 },
+        Plus,
+        Minus,
+        Star,
+        Slash,
+        OpenParen,
+        CloseParen,
+    },
 }
 
 function is_numeric(c: char): bool {

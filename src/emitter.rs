@@ -401,11 +401,20 @@ impl CEmitter {
                 writeln!(self.out_file, ";")?;
             }
             CheckedStatementKind::Record {
-                name: _,
+                name,
                 generic_params: _,
-                members: _,
+                members,
             } => {
-                //Don't emit records
+                writeln!(self.out_file, "typedef struct {} {{", name)?;
+                for member in members {
+                    writeln!(
+                        self.out_file,
+                        "{} {};",
+                        Self::get_c_type(&member.type_kind),
+                        member.name
+                    )?;
+                }
+                writeln!(self.out_file, "}} {};", name)?;
                 return Ok(());
             }
             CheckedStatementKind::Break => writeln!(self.out_file, "break;")?,
