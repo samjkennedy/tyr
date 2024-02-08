@@ -6,8 +6,8 @@ use std::{
 use crate::{
     parser::BinaryOpKind,
     type_checker::{
-        CheckedExpression, CheckedExpressionKind, CheckedPatternKind, CheckedStatement,
-        CheckedStatementKind, Module, TypeKind,
+        CheckedExpression, CheckedExpressionKind, CheckedPatternKind, CheckedRecordMember,
+        CheckedStatement, CheckedStatementKind, Module, TypeKind,
     },
 };
 
@@ -157,49 +157,49 @@ impl CEmitter {
         // }
         for type_kind in module.types.values() {
             match type_kind {
-                TypeKind::Record(name, generic_params, members) => {
-                    if !generic_params.is_empty() {
-                        writeln!(
-                            self.out_file,
-                            "typedef struct {}_{} {{",
-                            name,
-                            generic_params
-                                .iter()
-                                .map(Self::get_c_type)
-                                .collect::<Vec<String>>()
-                                .join("_")
-                        )?;
-                        for member in members {
-                            writeln!(
-                                self.out_file,
-                                "{} {};",
-                                Self::get_c_type(&member.type_kind),
-                                member.name
-                            )?;
-                        }
-                        writeln!(
-                            self.out_file,
-                            "}} {}_{};",
-                            name,
-                            generic_params
-                                .iter()
-                                .map(Self::get_c_type)
-                                .collect::<Vec<String>>()
-                                .join("_")
-                        )?;
-                    } else {
-                        writeln!(self.out_file, "typedef struct {} {{", name)?;
-                        for member in members {
-                            writeln!(
-                                self.out_file,
-                                "{} {};",
-                                Self::get_c_type(&member.type_kind),
-                                member.name
-                            )?;
-                        }
-                        writeln!(self.out_file, "}} {};", name)?;
-                    }
-                }
+                //         TypeKind::Record(name, generic_params, members) => {
+                //             if !generic_params.is_empty() {
+                //                 writeln!(
+                //                     self.out_file,
+                //                     "typedef struct {}_{} {{",
+                //                     name,
+                //                     generic_params
+                //                         .iter()
+                //                         .map(Self::get_c_type)
+                //                         .collect::<Vec<String>>()
+                //                         .join("_")
+                //                 )?;
+                //                 for member in members {
+                //                     writeln!(
+                //                         self.out_file,
+                //                         "{} {};",
+                //                         Self::get_c_type(&member.type_kind),
+                //                         member.name
+                //                     )?;
+                //                 }
+                //                 writeln!(
+                //                     self.out_file,
+                //                     "}} {}_{};",
+                //                     name,
+                //                     generic_params
+                //                         .iter()
+                //                         .map(Self::get_c_type)
+                //                         .collect::<Vec<String>>()
+                //                         .join("_")
+                //                 )?;
+                //             } else {
+                //                 writeln!(self.out_file, "typedef struct {} {{", name)?;
+                //                 for member in members {
+                //                     writeln!(
+                //                         self.out_file,
+                //                         "{} {};",
+                //                         Self::get_c_type(&member.type_kind),
+                //                         member.name
+                //                     )?;
+                //                 }
+                //                 writeln!(self.out_file, "}} {};", name)?;
+                //             }
+                //         }
                 TypeKind::Enum(name, variants) => {
                     //values array for printing
                     writeln!(
@@ -219,32 +219,31 @@ impl CEmitter {
                     }
                     writeln!(self.out_file, "}} {};", name)?;
                 }
-                TypeKind::TaggedUnion(name, variant_types) => {
-                    writeln!(self.out_file, "typedef struct {} {{", name)?;
-                    writeln!(self.out_file, "int tag;")?;
-                    writeln!(self.out_file, "union {}_variants {{", name)?;
-                    for variant_type in variant_types {
-                        match variant_type {
-                            TypeKind::UnionVariant(variant_name, data_types) => {
-                                writeln!(self.out_file, "struct {} {{", variant_name)?;
-                                writeln!(self.out_file, "int tag;")?;
-                                for (i, data_type) in data_types.iter().enumerate() {
-                                    writeln!(
-                                        self.out_file,
-                                        "{} v{};",
-                                        Self::get_c_type(data_type),
-                                        i
-                                    )?;
-                                }
-                                writeln!(self.out_file, "}} {}_variant;", variant_name)?;
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
-                    writeln!(self.out_file, "}} {};", name)?;
-                    writeln!(self.out_file, "}} {};", name)?;
-                }
-
+                // TypeKind::TaggedUnion(name, variant_types) => {
+                //     writeln!(self.out_file, "typedef struct {} {{", name)?;
+                //     writeln!(self.out_file, "int tag;")?;
+                //     writeln!(self.out_file, "union {}_variants {{", name)?;
+                //     for variant_type in variant_types {
+                //         match variant_type {
+                //             TypeKind::UnionVariant(variant_name, data_types) => {
+                //                 writeln!(self.out_file, "struct {} {{", variant_name)?;
+                //                 writeln!(self.out_file, "int tag;")?;
+                //                 for (i, data_type) in data_types.iter().enumerate() {
+                //                     writeln!(
+                //                         self.out_file,
+                //                         "{} v{};",
+                //                         Self::get_c_type(data_type),
+                //                         i
+                //                     )?;
+                //                 }
+                //                 writeln!(self.out_file, "}} {}_variant;", variant_name)?;
+                //             }
+                //             _ => unreachable!(),
+                //         }
+                //     }
+                //     writeln!(self.out_file, "}} {};", name)?;
+                //     writeln!(self.out_file, "}} {};", name)?;
+                // }
                 _ => todo!("emit module type kind: {}", type_kind),
             }
         }
@@ -401,11 +400,56 @@ impl CEmitter {
                 writeln!(self.out_file, ";")?;
             }
             CheckedStatementKind::Record {
-                name: _,
+                name,
                 generic_params: _,
-                members: _,
+                members,
             } => {
-                //Don't emit records
+                writeln!(self.out_file, "typedef struct {} {{", name)?;
+                for member in members {
+                    match member {
+                        CheckedRecordMember::Basic(variable) => {
+                            writeln!(
+                                self.out_file,
+                                "{} {};",
+                                Self::get_c_type(&variable.type_kind),
+                                variable.name,
+                            )?;
+                        }
+                        CheckedRecordMember::CaseMember(name, type_kind, case_variants) => {
+                            writeln!(self.out_file, "int {}_tag;", name)?;
+                            writeln!(self.out_file, "union {} {{", name)?;
+                            for case_variant in case_variants {
+                                if let CheckedRecordMember::CaseMember(
+                                    name,
+                                    type_kind,
+                                    variant_members,
+                                ) = case_variant
+                                {
+                                    writeln!(self.out_file, "struct {} {{", name)?;
+                                    writeln!(self.out_file, "int tag;")?;
+                                    for variant_member in variant_members {
+                                        if let CheckedRecordMember::Basic(variable) = variant_member
+                                        {
+                                            writeln!(
+                                                self.out_file,
+                                                "{} {};",
+                                                Self::get_c_type(&variable.type_kind),
+                                                variable.name,
+                                            )?;
+                                        } else {
+                                            unreachable!()
+                                        }
+                                    }
+                                    writeln!(self.out_file, "}} {}_variant;", name)?;
+                                } else {
+                                    unreachable!()
+                                }
+                            }
+                            writeln!(self.out_file, "}} {};", Self::get_c_type(type_kind))?;
+                        }
+                    }
+                }
+                writeln!(self.out_file, "}} {};", name)?;
                 return Ok(());
             }
             CheckedStatementKind::Break => writeln!(self.out_file, "break;")?,
@@ -451,7 +495,7 @@ impl CEmitter {
     ) -> Result<(), io::Error> {
         for arm in arms {
             match &arm.kind {
-                CheckedExpressionKind::MatchCase { pattern, result } => {
+                CheckedExpressionKind::SwitchCase { pattern, result } => {
                     write!(self.out_file, "     case ")?;
                     match pattern {
                         CheckedPatternKind::EnumIdentifier(enum_variant) => {
@@ -484,7 +528,10 @@ impl CEmitter {
                         }
                     }
 
-                    self.emit_statement(result)?;
+                    writeln!(self.out_file, "{{")?;
+                    self.emit_expression(result)?;
+                    writeln!(self.out_file, ";}}")?;
+
                     writeln!(self.out_file, "}};")?;
                     writeln!(self.out_file, "break;")?;
                 }
@@ -606,6 +653,19 @@ impl CEmitter {
                     } else if let TypeKind::Bool = &arg.type_kind {
                         self.emit_expression(arg)?;
                         write!(self.out_file, " ? \"true\" : \"false\"")?;
+                    } else if let TypeKind::Record(name, type_kind, members) = &arg.type_kind {
+                        for (i, member) in members.iter().enumerate() {
+                            match member {
+                                CheckedRecordMember::Basic(variable) => {
+                                    self.emit_expression(arg)?;
+                                    write!(self.out_file, ".{}", variable.name)?;
+                                    if i < members.len() - 1 {
+                                        write!(self.out_file, ",")?;
+                                    }
+                                }
+                                CheckedRecordMember::CaseMember(_, _, _) => todo!(),
+                            }
+                        }
                     } else {
                         self.emit_expression(arg)?;
                     }
@@ -809,7 +869,7 @@ impl CEmitter {
             CheckedExpressionKind::StaticAccessor { name, member } => {
                 write!(self.out_file, "{}_{}", name, member.name) //TODO member should be an expression we handle differently
             }
-            CheckedExpressionKind::MatchCase {
+            CheckedExpressionKind::SwitchCase {
                 pattern: _,
                 result: _,
             } => todo!(),
@@ -984,7 +1044,16 @@ impl CEmitter {
             TypeKind::Bool => "%s".to_string(),
             TypeKind::Array(_, _) => todo!(),
             TypeKind::Slice(_) => todo!(),
-            TypeKind::Record(_, _, _) => todo!(),
+            TypeKind::Record(_, _, members) => {
+                format!(
+                    "{{ {} }}",
+                    members
+                        .iter()
+                        .map(|m| Self::get_print_format_for_type(&m.get_type_kind()))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            }
             TypeKind::Enum(_, _) => "%s".to_string(),
             TypeKind::U8 => "%hhu".to_string(),
             TypeKind::U16 => "%hu".to_string(),

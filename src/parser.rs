@@ -49,7 +49,7 @@ pub enum StatementKind {
     Record {
         record_keyword: Token,
         identifier: Token,
-        members: Vec<(Token, Expression)>,
+        members: Vec<RecordMemberKind>,
         generic_type_parameters: Vec<Token>,
     },
     Enum {
@@ -193,10 +193,11 @@ pub enum ExpressionKind {
         dotdot: Token,
         upper: Box<Expression>,
     },
-    SwitchCase {
+    SwitchArm {
+        case_keyword: Token,
         pattern: PatternKind,
         fat_arrow: Token,
-        result: Box<Statement>,
+        result: Box<Expression>,
     },
     Nil {
         nil_keyword: Token,
@@ -215,6 +216,31 @@ pub enum ExpressionKind {
         open_paren: Token,
         data: Vec<TypeExpressionKind>,
         close_paren: Token,
+    },
+    RecordMember {
+        kind: RecordMemberKind,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum RecordMemberKind {
+    BasicMember {
+        identifier: Token,
+        type_expression: Box<Expression>,
+    },
+    VariantMember {
+        case_keyword: Token,
+        identifier: Token,
+        type_annotation: Box<Expression>,
+        open_curly: Token,
+        members: Vec<RecordMemberKind>,
+        close_curly: Token,
+    },
+    CaseMember {
+        identifier: Token,
+        open_curly: Option<Token>,
+        members: Vec<RecordMemberKind>,
+        close_curly: Option<Token>,
     },
 }
 
@@ -320,11 +346,12 @@ impl Location for ExpressionKind {
                 colon_colon: _,
                 member,
             } => span_locs(&namespace.loc, &member.kind.get_loc()),
-            ExpressionKind::SwitchCase {
-                pattern,
+            ExpressionKind::SwitchArm {
+                case_keyword,
+                pattern: _,
                 fat_arrow: _,
-                result: _,
-            } => span_locs(&pattern.get_loc(), &pattern.get_loc()), //TODO: result is a statement so can't get its Loc
+                result,
+            } => span_locs(&case_keyword.loc, &result.kind.get_loc()), //TODO: result is a statement so can't get its Loc
             ExpressionKind::Nil { nil_keyword } => nil_keyword.loc.clone(),
             ExpressionKind::ForceUnwrap { expression, bang } => {
                 span_locs(&expression.kind.get_loc(), &bang.loc)
@@ -345,6 +372,38 @@ impl Location for ExpressionKind {
                 data: _,
                 close_paren,
             } => span_locs(&identifier.loc, &close_paren.loc),
+            ExpressionKind::RecordMember { kind } => kind.get_loc(),
+        }
+    }
+}
+
+impl Location for RecordMemberKind {
+    fn get_loc(&self) -> Loc {
+        match self {
+            RecordMemberKind::BasicMember {
+                identifier,
+                type_expression,
+            } => span_locs(&identifier.loc, &type_expression.kind.get_loc()),
+
+            RecordMemberKind::VariantMember {
+                case_keyword,
+                identifier: _,
+                type_annotation: _,
+                open_curly: _,
+                members: _,
+                close_curly,
+            } => span_locs(&case_keyword.loc, &close_curly.loc),
+            RecordMemberKind::CaseMember {
+                identifier,
+                open_curly: _,
+                members: _,
+                close_curly,
+            } => {
+                return match close_curly {
+                    Some(close_curly) => span_locs(&identifier.loc, &close_curly.loc),
+                    None => identifier.loc.clone(),
+                }
+            }
         }
     }
 }
@@ -727,42 +786,28 @@ impl Parser {
                 let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
 
                 let mut generic_type_parameters: Vec<Token> = Vec::new();
-                if tokens.peek().is_some() && tokens.peek().unwrap().kind == TokenKind::OpenAngle {
-                    Self::expect_token(tokens, TokenKind::OpenAngle)?;
-                    while tokens.peek().is_some()
-                        && tokens.peek().unwrap().kind != TokenKind::CloseAngle
-                    {
-                        self.allow_record_literals.push(true);
-                        let generic_type_parameter =
-                            Self::expect_token(tokens, TokenKind::Identifier)?;
-                        self.allow_record_literals.pop();
-                        generic_type_parameters.push(generic_type_parameter);
+                // if tokens.peek().is_some() && tokens.peek().unwrap().kind == TokenKind::OpenAngle {
+                //     Self::expect_token(tokens, TokenKind::OpenAngle)?;
+                //     while tokens.peek().is_some()
+                //         && tokens.peek().unwrap().kind != TokenKind::CloseAngle
+                //     {
+                //         self.allow_record_literals.push(true);
+                //         let generic_type_parameter =
+                //             Self::expect_token(tokens, TokenKind::Identifier)?;
+                //         self.allow_record_literals.pop();
+                //         generic_type_parameters.push(generic_type_parameter);
 
-                        if tokens.peek().is_some()
-                            && tokens.peek().unwrap().kind != TokenKind::CloseAngle
-                        {
-                            Self::expect_token(tokens, TokenKind::Comma)?;
-                        }
-                    }
-                    Self::expect_token(tokens, TokenKind::CloseAngle)?;
-                }
+                //         if tokens.peek().is_some()
+                //             && tokens.peek().unwrap().kind != TokenKind::CloseAngle
+                //         {
+                //             Self::expect_token(tokens, TokenKind::Comma)?;
+                //         }
+                //     }
+                //     Self::expect_token(tokens, TokenKind::CloseAngle)?;
+                // }
                 Self::expect_token(tokens, TokenKind::OpenCurly)?;
 
-                let mut members: Vec<(Token, Expression)> = Vec::new();
-                while tokens.peek().is_some()
-                    && tokens.peek().unwrap().kind != TokenKind::CloseCurly
-                {
-                    let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
-                    let type_annotation = Self::parse_type_annotation(tokens)?;
-
-                    members.push((identifier, type_annotation));
-
-                    if tokens.peek().is_some()
-                        && tokens.peek().unwrap().kind != TokenKind::CloseCurly
-                    {
-                        Self::expect_token(tokens, TokenKind::Comma)?;
-                    }
-                }
+                let members = Self::parse_record_members(tokens)?;
 
                 Self::expect_token(tokens, TokenKind::CloseCurly)?;
 
@@ -1485,21 +1530,23 @@ impl Parser {
 
         let mut cases: Vec<Expression> = Vec::new();
         while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
+            let case_keyword = Self::expect_token(tokens, TokenKind::CaseKeyword)?;
             let pattern = self.parse_match_pattern(tokens)?;
-            let fat_arrow = Self::expect_token(tokens, TokenKind::FatArrow)?;
-            let result = self.parse_statement(tokens)?;
+            let fat_arrow = Self::expect_token(tokens, TokenKind::Colon)?;
+            let result = self.parse_binary_expression(tokens, 0)?;
 
             cases.push(Expression {
-                kind: ExpressionKind::SwitchCase {
+                kind: ExpressionKind::SwitchArm {
+                    case_keyword,
                     pattern,
                     fat_arrow,
                     result: Box::new(result),
                 },
             });
 
-            // if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
-            //     Self::expect_token(tokens, TokenKind::Comma)?;
-            // }
+            if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
+                Self::expect_token(tokens, TokenKind::Comma)?;
+            }
         }
         let _close_curly = Self::expect_token(tokens, TokenKind::CloseCurly)?;
 
@@ -1518,13 +1565,12 @@ impl Parser {
                 TokenKind::Identifier => {
                     let identifier = token.clone();
 
-                    if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::FatArrow
-                    {
+                    if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::Colon {
                         Self::expect_token(tokens, TokenKind::ColonColon)?;
                         let enum_name = Self::expect_token(tokens, TokenKind::Identifier)?;
 
                         if tokens.peek().is_some()
-                            && tokens.peek().unwrap().kind != TokenKind::FatArrow
+                            && tokens.peek().unwrap().kind != TokenKind::Colon
                         {
                             let open_paren = Self::expect_token(tokens, TokenKind::OpenParen)?;
                             let mut args: Vec<Token> = Vec::new();
@@ -1726,5 +1772,84 @@ impl Parser {
             Some(token) => Ok(token.clone()),
             None => Err(ParseError::UnexpectedEOF),
         }
+    }
+
+    fn parse_record_members(
+        tokens: &mut std::iter::Peekable<std::slice::Iter<'_, Token>>,
+    ) -> Result<Vec<RecordMemberKind>, ParseError> {
+        let mut members: Vec<RecordMemberKind> = Vec::new();
+        while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
+            let token = tokens.next().unwrap();
+            match token.kind {
+                TokenKind::EnumKeyword => {
+                    let case_keyword = token.clone();
+                    let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
+                    let type_annotation = Self::parse_type_annotation(tokens)?;
+
+                    let mut variant_members = Vec::new();
+
+                    let open_curly = Self::expect_token(tokens, TokenKind::OpenCurly)?;
+
+                    while tokens.peek().is_some()
+                        && tokens.peek().unwrap().kind != TokenKind::CloseCurly
+                    {
+                        let variant_identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
+
+                        if tokens.peek().is_some()
+                            && tokens.peek().unwrap().kind == TokenKind::OpenCurly
+                        {
+                            variant_members.push(RecordMemberKind::CaseMember {
+                                identifier: variant_identifier.clone(),
+                                open_curly: Some(Self::expect_token(tokens, TokenKind::OpenCurly)?),
+                                members: Self::parse_record_members(tokens)?,
+                                close_curly: Some(Self::expect_token(
+                                    tokens,
+                                    TokenKind::CloseCurly,
+                                )?),
+                            });
+                        } else {
+                            variant_members.push(RecordMemberKind::CaseMember {
+                                identifier: variant_identifier.clone(),
+                                open_curly: None,
+                                members: Vec::new(),
+                                close_curly: None,
+                            });
+                        }
+
+                        if tokens.peek().is_some()
+                            && tokens.peek().unwrap().kind != TokenKind::CloseCurly
+                        {
+                            Self::expect_token(tokens, TokenKind::Comma)?;
+                        }
+                    }
+                    let close_curly = Self::expect_token(tokens, TokenKind::CloseCurly)?;
+
+                    members.push(RecordMemberKind::VariantMember {
+                        case_keyword,
+                        identifier,
+                        type_annotation: Box::new(type_annotation),
+                        open_curly,
+                        members: variant_members,
+                        close_curly,
+                    });
+                }
+                TokenKind::Identifier => {
+                    let type_annotation = Self::parse_type_annotation(tokens)?;
+
+                    members.push(RecordMemberKind::BasicMember {
+                        identifier: token.clone(),
+                        type_expression: Box::new(type_annotation),
+                    });
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken(token.clone()));
+                }
+            }
+
+            if tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
+                Self::expect_token(tokens, TokenKind::Comma)?;
+            }
+        }
+        Ok(members)
     }
 }

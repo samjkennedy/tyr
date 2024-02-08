@@ -11,10 +11,10 @@ enum TrafficLight {
 }
 
 function print_color(c: Color) {
-    match c {
-        Color::Red => println("Red"),
-        Color::Green => println("Green"),
-        Color::Blue => println("Blue"),
+    switch c {
+        case Red: println("Red"),
+        case Green: println("Green"),
+        case Blue: println("Blue"),
     }
 }
 
