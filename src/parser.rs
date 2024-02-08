@@ -1781,7 +1781,7 @@ impl Parser {
         while tokens.peek().is_some() && tokens.peek().unwrap().kind != TokenKind::CloseCurly {
             let token = tokens.next().unwrap();
             match token.kind {
-                TokenKind::CaseKeyword => {
+                TokenKind::EnumKeyword => {
                     let case_keyword = token.clone();
                     let identifier = Self::expect_token(tokens, TokenKind::Identifier)?;
                     let type_annotation = Self::parse_type_annotation(tokens)?;

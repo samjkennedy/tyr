@@ -1,0 +1,11 @@
+type Option<T> = T | Nil;
+type Result<T, E> = T | E;
+
+function main() {
+    var t: Option<u32> = nil;
+
+    match t {
+        i: u32 => println(i),
+        nil => println("nil!"),
+    }
+}

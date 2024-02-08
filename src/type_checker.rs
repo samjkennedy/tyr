@@ -5,7 +5,7 @@ use crate::{
     lexer::{lex_file, span_locs, Loc, Token, TokenKind},
     parser::{
         self, BinaryOp, BinaryOpKind, Expression, ExpressionKind, Location, Parser, PatternKind,
-        Statement, StatementKind, TypeExpressionKind, UnaryOp, UnaryOpKind,
+        RecordMemberKind, Statement, StatementKind, TypeExpressionKind, UnaryOp, UnaryOpKind,
     },
 };
 
@@ -28,7 +28,7 @@ pub enum TypeKind {
     Array(usize, Box<TypeKind>),
     DynamicArray(Box<TypeKind>),
     Slice(Box<TypeKind>),
-    Record(String, Vec<TypeKind>, Vec<CheckedVariable>),
+    Record(String, Vec<TypeKind>, Vec<CheckedRecordMember>),
     Range(Box<TypeKind>),
     Enum(String, Vec<String>),
     TaggedUnion(String, Vec<TypeKind>),
@@ -237,7 +237,7 @@ pub enum CheckedStatementKind {
     Record {
         name: String,
         generic_params: Vec<TypeKind>,
-        members: Vec<CheckedVariable>,
+        members: Vec<CheckedRecordMember>,
     },
     Enum {
         name: String,
@@ -497,6 +497,26 @@ pub struct CheckedFunction {
     pub args: Vec<TypeKind>,
     pub return_type: Option<TypeKind>,
     declaration_loc: Loc,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckedRecordMember {
+    Basic(CheckedVariable),
+    CaseMember(String, TypeKind, Vec<CheckedRecordMember>),
+}
+impl CheckedRecordMember {
+    pub fn get_name(&self) -> String {
+        match self {
+            CheckedRecordMember::Basic(variable) => variable.name.clone(),
+            CheckedRecordMember::CaseMember(name, _, _) => name.clone(),
+        }
+    }
+    pub fn get_type_kind(&self) -> TypeKind {
+        match self {
+            CheckedRecordMember::Basic(variable) => variable.type_kind.clone(),
+            CheckedRecordMember::CaseMember(_, type_kind, _) => type_kind.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -802,60 +822,61 @@ impl Scope {
                 generic_parameter_types,
                 close_angle,
             } => {
-                if let TypeKind::Record(name, generic_params, members) =
-                    self.try_get_type(generic_type)?
-                {
-                    let mut erased_generics = HashMap::new();
-                    if generic_parameter_types.len() != generic_params.len() {
-                        return Err(TypeCheckError::WrongNumberOfTypeArguments {
-                            expected: generic_params.len(),
-                            actual: generic_parameter_types.len(),
-                            loc: span_locs(&open_angle.loc, &close_angle.loc),
-                        });
-                    }
-                    for (i, param_type) in generic_parameter_types.iter().enumerate() {
-                        match generic_params.get(i) {
-                            Some(param) => match param {
-                                TypeKind::GenericParameter(generic_param_name) => {
-                                    let erased_type = self.try_get_type(param_type)?;
+                // if let TypeKind::Record(name, generic_params, members) =
+                //     self.try_get_type(generic_type)?
+                // {
+                //     let mut erased_generics = HashMap::new();
+                //     if generic_parameter_types.len() != generic_params.len() {
+                //         return Err(TypeCheckError::WrongNumberOfTypeArguments {
+                //             expected: generic_params.len(),
+                //             actual: generic_parameter_types.len(),
+                //             loc: span_locs(&open_angle.loc, &close_angle.loc),
+                //         });
+                //     }
+                //     for (i, param_type) in generic_parameter_types.iter().enumerate() {
+                //         match generic_params.get(i) {
+                //             Some(param) => match param {
+                //                 TypeKind::GenericParameter(generic_param_name) => {
+                //                     let erased_type = self.try_get_type(param_type)?;
 
-                                    erased_generics.insert(
-                                        format!("{}_{}", name, generic_param_name),
-                                        erased_type,
-                                    );
-                                }
-                                _ => todo!(), //will this ever happen?
-                            },
-                            None => unreachable!(),
-                        }
-                    }
+                //                     erased_generics.insert(
+                //                         format!("{}_{}", name, generic_param_name),
+                //                         erased_type,
+                //                     );
+                //                 }
+                //                 _ => todo!(), //will this ever happen?
+                //             },
+                //             None => unreachable!(),
+                //         }
+                //     }
 
-                    let mut erased_members: Vec<CheckedVariable> = Vec::new();
-                    for member in members {
-                        if let TypeKind::GenericParameter(name) = member.type_kind {
-                            let erased_member = CheckedVariable {
-                                name: member.name,
-                                mutable: false,
-                                type_kind: erased_generics
-                                    .get(&name)
-                                    .expect("should not fail")
-                                    .clone(),
-                                declaration_loc: member.declaration_loc,
-                            };
-                            erased_members.push(erased_member)
-                        } else {
-                            erased_members.push(member);
-                        }
-                    }
+                //     let mut erased_members: Vec<CheckedVariable> = Vec::new();
+                //     for member in members {
+                //         if let TypeKind::GenericParameter(name) = member.type_kind {
+                //             let erased_member = CheckedVariable {
+                //                 name: member.name,
+                //                 mutable: false,
+                //                 type_kind: erased_generics
+                //                     .get(&name)
+                //                     .expect("should not fail")
+                //                     .clone(),
+                //                 declaration_loc: member.declaration_loc,
+                //             };
+                //             erased_members.push(erased_member)
+                //         } else {
+                //             erased_members.push(member);
+                //         }
+                //     }
 
-                    return Ok(TypeKind::Record(
-                        name,
-                        erased_generics.values().cloned().collect(),
-                        erased_members,
-                    ));
-                } else {
-                    todo!("other generic types, e.g. enums")
-                }
+                //     return Ok(TypeKind::Record(
+                //         name,
+                //         erased_generics.values().cloned().collect(),
+                //         erased_members,
+                //     ));
+                // } else {
+                //     todo!("other generic types, e.g. enums")
+                // }
+                todo!()
             }
             TypeExpressionKind::GenericParameter { type_name, param } => {
                 let name = format!("{}_{}", type_name, param.text);
@@ -1264,7 +1285,7 @@ impl TypeChecker {
                 generic_type_parameters,
                 members,
             } => {
-                let mut checked_members: Vec<CheckedVariable> = Vec::new();
+                let mut checked_members: Vec<CheckedRecordMember> = Vec::new();
 
                 let mut generic_params = Vec::new();
                 for gtp in generic_type_parameters {
@@ -1288,7 +1309,7 @@ impl TypeChecker {
 
                 for member in members {
                     match member {
-                        parser::RecordMemberKind::BasicMember {
+                        RecordMemberKind::BasicMember {
                             identifier: member_identifier,
                             type_expression: type_annotation,
                         } => {
@@ -1327,30 +1348,96 @@ impl TypeChecker {
                                     type_kind = self.scope.try_get_type(type_expression_kind)?;
                                 }
 
-                                checked_members.push(CheckedVariable {
+                                checked_members.push(CheckedRecordMember::Basic(CheckedVariable {
                                     name: member_identifier.text.clone(),
                                     mutable: false,
                                     type_kind,
                                     declaration_loc: member_identifier.loc.clone(),
-                                })
+                                }));
                             } else {
                                 panic!("non-type annotation expression made it into here")
                             }
                         }
-                        parser::RecordMemberKind::VariantMember {
+                        RecordMemberKind::VariantMember {
                             case_keyword,
                             identifier,
                             type_annotation,
                             open_curly,
                             members,
                             close_curly,
-                        } => todo!(),
-                        parser::RecordMemberKind::CaseMember {
+                        } => {
+                            if let ExpressionKind::TypeAnnotation {
+                                colon: _,
+                                type_expression_kind,
+                            } = &type_annotation.kind
+                            {
+                                let type_kind = self.scope.try_get_type(type_expression_kind)?;
+
+                                let mut case_variants = Vec::new();
+
+                                for member in members {
+                                    if let RecordMemberKind::CaseMember {
+                                        identifier,
+                                        open_curly,
+                                        members,
+                                        close_curly,
+                                    } = member
+                                    {
+                                        let mut checked_members = Vec::new();
+                                        for case_member in members {
+                                            if let RecordMemberKind::BasicMember {
+                                                identifier,
+                                                type_expression,
+                                            } = case_member
+                                            {
+                                                if let ExpressionKind::TypeAnnotation {
+                                                    colon: _,
+                                                    type_expression_kind,
+                                                } = &type_expression.kind
+                                                {
+                                                    let type_kind = self
+                                                        .scope
+                                                        .try_get_type(type_expression_kind)?;
+                                                    checked_members.push(
+                                                        CheckedRecordMember::Basic(
+                                                            CheckedVariable {
+                                                                name: identifier.text.clone(),
+                                                                type_kind,
+                                                                mutable: false,
+                                                                declaration_loc: Loc::null(),
+                                                            },
+                                                        ),
+                                                    )
+                                                } else {
+                                                    unreachable!()
+                                                }
+                                            } else {
+                                                unreachable!()
+                                            }
+                                        }
+                                        case_variants.push(CheckedRecordMember::CaseMember(
+                                            identifier.text.clone(),
+                                            type_kind.clone(),
+                                            checked_members,
+                                        ));
+                                    }
+                                }
+
+                                checked_members.push(CheckedRecordMember::CaseMember(
+                                    identifier.text.clone(),
+                                    type_kind,
+                                    case_variants,
+                                ))
+                            } else {
+                                unreachable!()
+                            }
+                        }
+                        RecordMemberKind::CaseMember {
                             identifier,
                             open_curly,
                             members,
                             close_curly,
-                        } => todo!(),
+                        } => unreachable!(),
                     }
                 }
 
@@ -1878,27 +1965,27 @@ impl TypeChecker {
                         ),
                     };
 
-                    for modifier in modifiers {
-                        match modifier.kind {
-                            TokenKind::WithKeyword => {
-                                if let TypeKind::Record(_, _, members) = &type_kind {
-                                    for member in members {
-                                        //TODO: This should use a function try_declare_lookup_override() or something, so that there can be an ordering
-                                        self.scope.lookup_overrides.insert(
-                                            member.name.clone(),
-                                            (arg.name.clone(), member.clone()),
-                                        );
-                                    }
-                                } else {
-                                    return Err(TypeCheckError::WithCalledOnNonRecordType {
-                                        type_kind,
-                                        loc: modifier.loc.clone(),
-                                    });
-                                }
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
+                    // for modifier in modifiers {
+                    //     match modifier.kind {
+                    //         TokenKind::WithKeyword => {
+                    //             if let TypeKind::Record(_, _, members) = &type_kind {
+                    //                 for member in members {
+                    //                     //TODO: This should use a function try_declare_lookup_override() or something, so that there can be an ordering
+                    //                     self.scope.lookup_overrides.insert(
+                    //                         member.name.clone(),
+                    //                         (arg.name.clone(), member.clone()),
+                    //                     );
+                    //                 }
+                    //             } else {
+                    //                 return Err(TypeCheckError::WithCalledOnNonRecordType {
+                    //                     type_kind,
+                    //                     loc: modifier.loc.clone(),
+                    //                 });
+                    //             }
+                    //         }
+                    //         _ => unreachable!(),
+                    //     }
+                    // }
                     self.scope
                         .try_declare_variable(arg.clone(), arg_identifier.loc.clone())?;
 
@@ -2671,26 +2758,26 @@ impl TypeChecker {
                                     format!("da_{}", element_type),
                                     vec![],
                                     vec![
-                                        CheckedVariable {
+                                        CheckedRecordMember::Basic(CheckedVariable {
                                             name: "data".to_string(),
                                             mutable: false,
                                             type_kind: TypeKind::Pointer(Box::new(
                                                 *element_type.clone(),
                                             )),
                                             declaration_loc: Loc::null(),
-                                        },
-                                        CheckedVariable {
+                                        }),
+                                        CheckedRecordMember::Basic(CheckedVariable {
                                             name: "capacity".to_string(),
                                             mutable: false,
                                             type_kind: TypeKind::U16,
                                             declaration_loc: Loc::null(),
-                                        },
-                                        CheckedVariable {
+                                        }),
+                                        CheckedRecordMember::Basic(CheckedVariable {
                                             name: "count".to_string(),
                                             mutable: false,
                                             type_kind: TypeKind::U16,
                                             declaration_loc: Loc::null(),
-                                        },
+                                        }),
                                     ],
                                 ),
                             );
@@ -2770,145 +2857,143 @@ impl TypeChecker {
                     identifier: record_identifier.clone(),
                 })?;
 
-                let (type_kind, checked_expression_kind) = match self
-                    .scope
-                    .assign_context
-                    .clone()
-                    .last()
-                {
-                    Some(ty) => {
-                        if let TypeKind::Optional(base_type) = ty {
-                            self.scope.assign_context.push(*base_type.clone());
+                let (type_kind, checked_expression_kind) =
+                    match self.scope.assign_context.clone().last() {
+                        Some(ty) => {
+                            if let TypeKind::Optional(base_type) = ty {
+                                self.scope.assign_context.push(*base_type.clone());
 
-                            let checked_expr = self.type_check_expression(expression)?;
+                                let checked_expr = self.type_check_expression(expression)?;
 
-                            self.scope.assign_context.pop();
+                                self.scope.assign_context.pop();
 
-                            (TypeKind::Optional(base_type.clone()), checked_expr.kind)
-                        } else if let TypeKind::Record(name, _generic_params, members) =
-                            &record_type
-                        {
-                            let outer_scope = self.scope.clone();
-                            self.scope = Scope::new_inner_scope(outer_scope.clone());
+                                (TypeKind::Optional(base_type.clone()), checked_expr.kind)
+                            } else if let TypeKind::Record(name, _generic_params, members) =
+                                &record_type
+                            {
+                                let outer_scope = self.scope.clone();
+                                self.scope = Scope::new_inner_scope(outer_scope.clone());
 
-                            let n_members = members.len();
+                                let n_members = members.len();
 
-                            //generic_params = T, U, V etc
-                            let mut checked_args: Vec<CheckedExpression> = Vec::new();
-                            for (i, member) in members.iter().enumerate() {
-                                match args.get(i) {
-                                    Some(arg) => {
-                                        self.scope.assign_context.push(member.type_kind.clone());
-                                        let checked_arg = self.type_check_expression(arg)?;
+                                //generic_params = T, U, V etc
+                                let mut checked_args: Vec<CheckedExpression> = Vec::new();
+                                for (i, member) in members.iter().enumerate() {
+                                    match args.get(i) {
+                                        Some(arg) => {
+                                            self.scope.assign_context.push(member.get_type_kind());
+                                            let checked_arg = self.type_check_expression(arg)?;
 
-                                        //TODO: this needs to erase record_type's generics
+                                            //TODO: this needs to erase record_type's generics
 
-                                        self.scope.assign_context.pop();
+                                            self.scope.assign_context.pop();
 
-                                        self.expect_type(
-                                            member.type_kind.clone(),
-                                            checked_arg.type_kind.clone(),
-                                            arg.kind.get_loc().clone(),
-                                        )?;
-                                        checked_args.push(checked_arg);
-                                    }
-                                    None => {
-                                        return Err(TypeCheckError::MissingArgForRecord {
-                                            record_name: name.clone(),
-                                            name: member.name.clone(),
-                                            type_kind: member.type_kind.clone(),
-                                            loc: close_curly.loc.clone(),
-                                        })
+                                            self.expect_type(
+                                                member.get_type_kind(),
+                                                checked_arg.type_kind.clone(),
+                                                arg.kind.get_loc().clone(),
+                                            )?;
+                                            checked_args.push(checked_arg);
+                                        }
+                                        None => {
+                                            return Err(TypeCheckError::MissingArgForRecord {
+                                                record_name: name.clone(),
+                                                name: member.get_name(),
+                                                type_kind: member.get_type_kind(),
+                                                loc: close_curly.loc.clone(),
+                                            })
+                                        }
                                     }
                                 }
-                            }
 
-                            self.scope = outer_scope;
+                                self.scope = outer_scope;
 
-                            if args.len() > n_members {
-                                let checked_arg = self.type_check_expression(&args[n_members])?;
-                                return Err(TypeCheckError::UnexpectedArgForRecord {
-                                    type_kind: checked_arg.type_kind,
-                                    record_name: record_name.clone(),
-                                    loc: args[n_members].kind.get_loc().clone(),
+                                if args.len() > n_members {
+                                    let checked_arg =
+                                        self.type_check_expression(&args[n_members])?;
+                                    return Err(TypeCheckError::UnexpectedArgForRecord {
+                                        type_kind: checked_arg.type_kind,
+                                        record_name: record_name.clone(),
+                                        loc: args[n_members].kind.get_loc().clone(),
+                                    });
+                                }
+                                (
+                                    record_type,
+                                    CheckedExpressionKind::RecordLiteral {
+                                        arguments: checked_args,
+                                    },
+                                )
+                            } else {
+                                //TODO: maybe better error
+                                return Err(TypeCheckError::NoSuchTypeDeclaredInScope {
+                                    name: record_name.clone(),
+                                    loc: open_curly.loc.clone(),
                                 });
                             }
-                            (
-                                record_type,
-                                CheckedExpressionKind::RecordLiteral {
-                                    arguments: checked_args,
-                                },
-                            )
-                        } else {
-                            //TODO: maybe better error
-                            return Err(TypeCheckError::NoSuchTypeDeclaredInScope {
-                                name: record_name.clone(),
-                                loc: open_curly.loc.clone(),
-                            });
                         }
-                    }
-                    None => {
-                        if let TypeKind::Record(name, _generic_params, members) = &record_type {
-                            let outer_scope = self.scope.clone();
-                            self.scope = Scope::new_inner_scope(outer_scope.clone());
+                        None => {
+                            if let TypeKind::Record(name, _generic_params, members) = &record_type {
+                                let outer_scope = self.scope.clone();
+                                self.scope = Scope::new_inner_scope(outer_scope.clone());
 
-                            let n_members = members.len();
+                                let n_members = members.len();
 
-                            //generic_params = T, U, V etc
-                            let mut checked_args: Vec<CheckedExpression> = Vec::new();
-                            for (i, member) in members.iter().enumerate() {
-                                match args.get(i) {
-                                    Some(arg) => {
-                                        self.scope.assign_context.push(member.type_kind.clone());
-                                        let checked_arg = self.type_check_expression(arg)?;
+                                //generic_params = T, U, V etc
+                                let mut checked_args: Vec<CheckedExpression> = Vec::new();
+                                for (i, member) in members.iter().enumerate() {
+                                    match args.get(i) {
+                                        Some(arg) => {
+                                            self.scope.assign_context.push(member.get_type_kind());
+                                            let checked_arg = self.type_check_expression(arg)?;
 
-                                        //TODO: this needs to erase record_type's generics
+                                            //TODO: this needs to erase record_type's generics
 
-                                        self.scope.assign_context.pop();
+                                            self.scope.assign_context.pop();
 
-                                        self.expect_type(
-                                            member.type_kind.clone(),
-                                            checked_arg.type_kind.clone(),
-                                            arg.kind.get_loc().clone(),
-                                        )?;
-                                        checked_args.push(checked_arg);
-                                    }
-                                    None => {
-                                        return Err(TypeCheckError::MissingArgForRecord {
-                                            record_name: name.clone(),
-                                            name: member.name.clone(),
-                                            type_kind: member.type_kind.clone(),
-                                            loc: close_curly.loc.clone(),
-                                        })
+                                            self.expect_type(
+                                                member.get_type_kind(),
+                                                checked_arg.type_kind.clone(),
+                                                arg.kind.get_loc().clone(),
+                                            )?;
+                                            checked_args.push(checked_arg);
+                                        }
+                                        None => {
+                                            return Err(TypeCheckError::MissingArgForRecord {
+                                                record_name: name.clone(),
+                                                name: member.get_name(),
+                                                type_kind: member.get_type_kind(),
+                                                loc: close_curly.loc.clone(),
+                                            })
+                                        }
                                     }
                                 }
-                            }
 
-                            self.scope = outer_scope;
+                                self.scope = outer_scope;
 
-                            if args.len() > n_members {
-                                let checked_arg = self.type_check_expression(&args[n_members])?;
-                                return Err(TypeCheckError::UnexpectedArgForRecord {
-                                    type_kind: checked_arg.type_kind,
-                                    record_name: record_name.clone(),
-                                    loc: args[n_members].kind.get_loc().clone(),
+                                if args.len() > n_members {
+                                    let checked_arg =
+                                        self.type_check_expression(&args[n_members])?;
+                                    return Err(TypeCheckError::UnexpectedArgForRecord {
+                                        type_kind: checked_arg.type_kind,
+                                        record_name: record_name.clone(),
+                                        loc: args[n_members].kind.get_loc().clone(),
+                                    });
+                                }
+                                (
+                                    record_type,
+                                    CheckedExpressionKind::RecordLiteral {
+                                        arguments: checked_args,
+                                    },
+                                )
+                            } else {
+                                //TODO: maybe better error
+                                return Err(TypeCheckError::NoSuchTypeDeclaredInScope {
+                                    name: record_name.clone(),
+                                    loc: open_curly.loc.clone(),
                                 });
                             }
-                            (
-                                record_type,
-                                CheckedExpressionKind::RecordLiteral {
-                                    arguments: checked_args,
-                                },
-                            )
-                        } else {
-                            //TODO: maybe better error
-                            return Err(TypeCheckError::NoSuchTypeDeclaredInScope {
-                                name: record_name.clone(),
-                                loc: open_curly.loc.clone(),
-                            });
                         }
-                    }
-                };
+                    };
 
                 Ok(CheckedExpression {
                     kind: checked_expression_kind,
@@ -2925,13 +3010,14 @@ impl TypeChecker {
                 let member_name = &member_identifier.text;
                 match &checked_accessee.type_kind.clone() {
                     TypeKind::Record(name, _generic_params, members) => {
-                        if let Some(member) = members.iter().find(|m| &m.name == member_name) {
+                        if let Some(member) = members.iter().find(|m| &m.get_name() == member_name)
+                        {
                             return Ok(CheckedExpression {
                                 kind: CheckedExpressionKind::Accessor {
                                     accessee: Box::new(checked_accessee),
-                                    member: member.name.to_string(),
+                                    member: member.get_name(),
                                 },
-                                type_kind: member.type_kind.clone(),
+                                type_kind: member.get_type_kind(),
                                 loc: dot.loc.clone(),
                             });
                         } else {
@@ -3025,13 +3111,14 @@ impl TypeChecker {
                     if let TypeKind::Record(name, _generic_params, members) = *base_type.clone() {
                         let member_name = &member_identifier.text;
 
-                        if let Some(member) = members.iter().find(|m| &m.name == member_name) {
+                        if let Some(member) = members.iter().find(|m| &m.get_name() == member_name)
+                        {
                             return Ok(CheckedExpression {
                                 kind: CheckedExpressionKind::SafeAccessor {
                                     accessee: Box::new(checked_accessee),
-                                    member: member.name.to_string(),
+                                    member: member.get_name(),
                                 },
-                                type_kind: TypeKind::Optional(Box::new(member.type_kind.clone())),
+                                type_kind: TypeKind::Optional(Box::new(member.get_type_kind())),
                                 loc: question_dot.loc.clone(),
                             });
                         } else {
@@ -3371,24 +3458,24 @@ impl TypeChecker {
                     format!("sl_{}", el_type),
                     vec![],
                     vec![
-                        CheckedVariable {
+                        CheckedRecordMember::Basic(CheckedVariable {
                             name: "data".to_string(),
                             mutable: false,
                             type_kind: TypeKind::Pointer(Box::new(el_type.clone())),
                             declaration_loc: Loc::null(),
-                        },
-                        CheckedVariable {
+                        }),
+                        CheckedRecordMember::Basic(CheckedVariable {
                             name: "offset".to_string(),
                             mutable: false,
                             type_kind: TypeKind::U16,
                             declaration_loc: Loc::null(),
-                        },
-                        CheckedVariable {
+                        }),
+                        CheckedRecordMember::Basic(CheckedVariable {
                             name: "count".to_string(),
                             mutable: false,
                             type_kind: TypeKind::U16,
                             declaration_loc: Loc::null(),
-                        },
+                        }),
                     ],
                 ),
             );

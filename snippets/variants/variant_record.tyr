@@ -14,7 +14,7 @@ record Color {
 
 record Shape {
     color: Color,
-    case kind: ShapeKind {
+    enum kind: ShapeKind {
         Point,
         Circle { radius: f32 },
         Square { length: f32 },
@@ -25,4 +25,6 @@ record Shape {
 function main() {
     var red = Color { 255, 0, 0, 255 };
     var green = Color { 0, 255, 0, 255 };
+    println(red);
+    println(green);
 }

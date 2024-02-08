@@ -21,11 +21,11 @@ record Shape {
 }
 
 function area(s: Shape): f32 {
-    switch s.kind {
-        case Circle { radius } => 3.14 * radius * radius,
-        case Square { side_length } => side_length * side_length,
-        case Rectangle { width, height } => width * height,
-    }
+    return switch s.kind {
+        case Circle { radius }: 3.14 * radius * radius,
+        case Square { side_length }: side_length * side_length,
+        case Rectangle { width, height }: width * height,
+    };
 }
 
 function total_area(shapes: []Shape): f32 {

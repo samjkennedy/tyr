@@ -1,5 +1,5 @@
 enum TokenKind {
-    IntLiteral,
+    IntLiteral(u32),
     Plus,
     Minus,
     Star,
@@ -9,15 +9,7 @@ enum TokenKind {
 }
 
 record Token {
-    case kind: TokenKind {
-        IntLiteral { value: i32 },
-        Plus,
-        Minus,
-        Star,
-        Slash,
-        OpenParen,
-        CloseParen,
-    },
+    kind: TokenKind
 }
 
 function is_numeric(c: char): bool {
@@ -82,11 +74,11 @@ enum BinaryOp {
 }
 
 function print_binop(binop: BinaryOp) {
-    match binop {
-        BinaryOp::Add => print("+");
-        BinaryOp::Sub => print("-");
-        BinaryOp::Mul => print("*");
-        BinaryOp::Div => print("/");
+    switch binop {
+        case BinaryOp::Add(): print("+"),
+        case BinaryOp::Sub(): print("-"),
+        case BinaryOp::Mul(): print("*"),
+        case BinaryOp::Div(): print("/"),
     }
 }
 
@@ -97,18 +89,18 @@ enum Expression {
 }
 
 function print_expression(e: Expression) {
-    match e {
-        Expression::IntLiteral(i) => print(i);
-        Expression::Parenthesised(expr) => {
+    switch e {
+        case Expression::IntLiteral(i): print(i),
+        case Expression::Parenthesised(expr): {
             print("(");
             expr.print_expression();
             print(")");
-        }
-        Expression::Binary(left, op, right) => {
+        },
+        case Expression::Binary(left, op, right): {
             left.print_expression();
             op.print_binop();
             right.print_expression();
-        }
+        },
     }
 }
 

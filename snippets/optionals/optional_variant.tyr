@@ -1,0 +1,26 @@
+enum Option {
+    Some,
+    None,
+}
+
+record OptionalU32 {
+    enum value: Option {
+        Some { value: u32 },
+        None,
+    }
+}
+
+function is_some(op: OptionalU32): bool {
+    return match op.value {
+        Option::Some{ value } => true,
+        Option::None => false,
+    };
+}
+
+function is_none(op: OptionalU32): bool {
+    return !op.is_some();
+}
+
+function main() {
+    println("hello world!");
+}
