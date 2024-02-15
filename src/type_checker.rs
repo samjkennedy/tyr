@@ -4,8 +4,9 @@ use std::{collections::HashMap, path::PathBuf};
 use crate::{
     lexer::{lex_file, span_locs, Loc, Token, TokenKind},
     parser::{
-        self, BinaryOp, BinaryOpKind, Expression, ExpressionKind, Location, Parser, PatternKind,
-        RecordMemberKind, Statement, StatementKind, TypeExpressionKind, UnaryOp, UnaryOpKind,
+        self, BinaryOp, BinaryOpKind, CompilerDirectiveKind, Expression, ExpressionKind, Location,
+        Parser, PatternKind, RecordMemberKind, Statement, StatementKind, TypeExpressionKind,
+        UnaryOp, UnaryOpKind,
     },
 };
 
@@ -200,6 +201,7 @@ pub enum TypeCheckError {
         loc: Loc,
     },
     CannotReassignConstant(Loc),
+    NonConstValueAssignedToCompileTimeConstant(Loc),
 }
 
 #[derive(Debug, Clone)]
@@ -1707,6 +1709,46 @@ impl TypeChecker {
                     kind: CheckedStatementKind::NoOp,
                 })
             }
+            StatementKind::CompilerDirective {
+                at_sign,
+                identifier,
+                kind,
+                statement,
+            } => match kind {
+                CompilerDirectiveKind::ConstantValue => {
+                    let checked_statement = self.type_check_statement(statement)?;
+                    match checked_statement.kind {
+                        CheckedStatementKind::ValueDeclaration {
+                            name,
+                            type_kind,
+                            mutable,
+                            initialiser,
+                        } => {
+                            assert!(!mutable);
+
+                            if !initialiser.is_const() {
+                                return Err(
+                                    TypeCheckError::NonConstValueAssignedToCompileTimeConstant(
+                                        initialiser.loc,
+                                    ),
+                                );
+                            }
+                            match initialiser.get_const_value() {
+                                Some(value) => match value.kind {
+                                    CheckedExpressionKind::I32Literal { value } => todo!(),
+                                    _ => todo!("{:?}", value.kind),
+                                },
+                                None => {
+                                    Err(TypeCheckError::NonConstValueAssignedToCompileTimeConstant(
+                                        initialiser.loc,
+                                    ))
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            },
         }
     }
 

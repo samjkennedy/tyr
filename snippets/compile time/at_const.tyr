@@ -1,0 +1,5 @@
+function main() {
+    @const i: i32 = 10;
+
+    print(i);
+}
