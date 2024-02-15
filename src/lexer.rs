@@ -19,6 +19,7 @@ impl From<io::Error> for LexError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
+    AtSign,
     AndKeyword,
     AsKeyword,
     Bang,
@@ -516,6 +517,14 @@ pub fn lex_file(file: String) -> Result<Vec<Token>, LexError> {
                     tokens.push(Token::new(
                         TokenKind::Semicolon,
                         ";".to_string(),
+                        Loc { row, col, len: 1 },
+                    ));
+                    col += 1;
+                }
+                '@' => {
+                    tokens.push(Token::new(
+                        TokenKind::AtSign,
+                        "@".to_string(),
                         Loc { row, col, len: 1 },
                     ));
                     col += 1;

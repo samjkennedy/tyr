@@ -119,6 +119,21 @@ pub fn print_parse_error(file_name: &str, e: &ParseError) {
             )
         }
         ParseError::CannotStaticallyAccess(_expression) => todo!(),
+        ParseError::UnknownCompilerDirective { identifier, loc } => {
+            let error_line = get_error_line(file_name, loc);
+            let highlight = format!(
+                "    |\n{}\n    |{}",
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
+            );
+            eprintln!(
+                "{} unknown compiler directive `@{}` at {}\n{}",
+                log_level,
+                identifier.text,
+                format_location(file_name, loc),
+                highlight,
+            )
+        }
     }
 }
 
@@ -537,6 +552,20 @@ pub fn print_typecheck_error(file_name: &str, error: &TypeCheckError) -> String 
             );
             format!(
                 "{} cannot reassign constant value at {}\n{}",
+                log_level,
+                format_location(file_name, loc),
+                highlight,
+            )
+        }
+        TypeCheckError::NonConstValueAssignedToCompileTimeConstant(loc) => {
+            let error_line = get_error_line(file_name, loc);
+            let highlight = format!(
+                "    |\n{}\n    |{}",
+                format_error_line(loc, &error_line),
+                format_highlight(loc)
+            );
+            format!(
+                "{} cannot assign non-constant expression to constant value at {}\n{}",
                 log_level,
                 format_location(file_name, loc),
                 highlight,

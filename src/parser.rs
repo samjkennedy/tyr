@@ -83,6 +83,17 @@ pub enum StatementKind {
         iterable: Expression,
         body: Box<Statement>,
     },
+    CompilerDirective {
+        at_sign: Token,
+        identifier: Token,
+        kind: CompilerDirectiveKind,
+        statement: Box<Statement>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum CompilerDirectiveKind {
+    ConstantValue,
 }
 
 #[derive(Debug, Clone)]
@@ -552,6 +563,7 @@ pub enum ParseError {
     ExpectedSemicolon(Loc),
     UnexpectedEOF,
     CannotStaticallyAccess(Expression),
+    UnknownCompilerDirective { identifier: Token, loc: Loc },
 }
 #[derive(Debug, Clone)]
 pub struct Parser {
@@ -936,6 +948,32 @@ impl Parser {
                 //     },
                 //     loc: span_locs(&import_keyword.loc, &semicolon.loc),
                 // })
+            }
+            TokenKind::AtSign => {
+                let at_sign = Self::expect_token(tokens, TokenKind::AtSign)?;
+                if let Some(token) = tokens.peek() {
+                    match token.kind {
+                        TokenKind::ConstKeyword => {
+                            let const_keyword = token.clone();
+                            let statement = self.parse_statement(tokens)?;
+
+                            Ok(Statement {
+                                kind: StatementKind::CompilerDirective {
+                                    at_sign,
+                                    identifier: const_keyword.clone(),
+                                    kind: CompilerDirectiveKind::ConstantValue,
+                                    statement: Box::new(statement),
+                                },
+                            })
+                        }
+                        _ => Err(ParseError::UnknownCompilerDirective {
+                            identifier: token.clone().clone(),
+                            loc: span_locs(&at_sign.loc, &token.loc),
+                        }),
+                    }
+                } else {
+                    return Err(ParseError::UnexpectedEOF);
+                }
             }
             _ => {
                 let expression = self.parse_binary_expression(tokens, 0)?;

@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::Command;
 use std::{env, fs::File};
 
-use emitter::CEmitter;
+use c_emitter::CEmitter;
 use lexer::{lex_file, LexError};
 use parser::{Parser, Statement};
 use type_checker::TypeChecker;
@@ -10,9 +10,11 @@ use type_checker::TypeChecker;
 use crate::diagnostics::print_parse_error;
 use crate::diagnostics::print_typecheck_error;
 
+pub mod c_emitter;
 pub mod emitter;
 pub mod lexer;
 pub mod parser;
+pub mod qbe_emitter;
 pub mod rewriter;
 pub mod type_checker;
 
